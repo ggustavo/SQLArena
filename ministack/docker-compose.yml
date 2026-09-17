@@ -1,0 +1,20 @@
+services:
+  ministack:
+    image: ministackorg/ministack:latest
+    container_name: ministack
+
+    ports:
+      - "127.0.0.1:4566:4566"
+
+    environment:
+      GATEWAY_PORT: 4566
+      LOG_LEVEL: INFO
+      S3_PERSIST: 1
+      RDS_BASE_PORT: 15432
+      ELASTICACHE_BASE_PORT: 16379
+
+    volumes:
+      - ./data/s3:/tmp/ministack-data/s3
+      - /var/run/docker.sock:/var/run/docker.sock
+
+    restart: "no"
