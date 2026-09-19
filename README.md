@@ -1,268 +1,267 @@
-# SQLArena - End-to-End Testing Guide
+# SQLArena - Infraestrutura & Ambiente de Desenvolvimento
 
-This guide provides instructions for setting up the local AWS environment (Ministack), running the FastAPI backend service and the asynchronous evaluation worker, and executing end-to-end integration tests.
-
----
-
-## Prerequisites
-
-- **Docker** and **Docker Compose** installed and running.
-- **Python 3.10+** installed.
-- Three terminal windows/tabs for concurrent execution.
+Este projeto foi estruturado para suportar o desenvolvimento e testes locais com **Ministack** (emulador de serviços AWS via Docker) e permitir a migração transparente de toda a infraestrutura para a **AWS real** utilizando **Terraform (Infraestrutura como Código - IaC)**.
 
 ---
 
-## Step 1: Start and Provision Local Infrastructure (Ministack)
+## 1. Estrutura do Projeto
 
-Ministack emulates AWS services on port `4566`: S3, SQS, DynamoDB, RDS (PostgreSQL), and ElastiCache (Redis).
-
-From the repository root, in **Terminal 1**:
-
-```bash
-# Navigate to the ministack directory
-cd ministack
-
-# Start the Ministack container
-docker compose up -d
-
-# Provision the PostgreSQL (port 15432) and Redis (port 16379) containers
-python setup_all.py
+```text
+SQLArena/
+├── ministack/                   # Configuração e persistência do emulador local
+│   ├── docker-compose.yml       # Orquestração do ministack
+│   └── data/                    # Dados locais persistidos (S3, logs, etc.)
+│
+├── terraform/                   # Infraestrutura como Código
+│   ├── providers.tf             # Configuração do provedor AWS e endpoints locais
+│   ├── variables.tf             # Variáveis de ambiente e configuração
+│   ├── outputs.tf               # Dados de saída (URLs de conexão, IDs de recursos)
+│   ├── rds.tf                   # Declaração da instância do banco de dados (RDS PostgreSQL)
+│   ├── elasticache.tf           # Declaração do cluster Redis (ElastiCache)
+│   ├── ec2.tf                   # Declaração da máquina virtual e firewall (EC2)
+│   ├── sqs.tf                   # Declaração da fila principal e DLQ (SQS)
+│   └── envs/
+│       ├── local.tfvars         # Parâmetros para rodar apontando para o Ministack
+│       └── aws.tfvars           # Parâmetros para deploy na AWS de verdade
+│
+└── app/                         # Código da aplicação, módulos e configurações
+    ├── .env                     # Variáveis de ambiente ativas (ignorado pelo Git)
+    ├── .env.example             # Modelo documentado das variáveis de ambiente
+    ├── requirements.txt         # Dependências Python centralizadas
+    ├── backend/                 # Código da API backend
+    └── sqs/                     # Módulo e testes do Amazon SQS
+        ├── queue_manager.py     # Funções de envio, consumo, purge e DLQ
+        └── main.py              # Script de teste e demonstração da fila
 ```
 
-Allow a few seconds for the spawned Docker containers to complete their startup routines.
+---
+
+## 2. Pré-requisitos & Instalação
+
+### 1. Docker
+* Certifique-se de que o **Docker** (ou Docker Desktop no macOS/Windows) esteja instalado e em execução.
 
 ---
 
-## Step 2: Configure the Backend Environment
+### 2. Terraform CLI
 
-In **Terminal 2**:
+Instale o Terraform de acordo com o seu sistema operacional:
 
+#### Linux (Ubuntu / Debian)
 ```bash
-# Navigate to the backend directory
-cd backend
+sudo apt-get update && sudo apt-get install -y gnupg software-properties-common curl
+curl -fsSL https://apt.releases.hashicorp.com/gpg | sudo gpg --dearmor -o /usr/share/keyrings/hashicorp-archive-keyring.gpg
+echo "deb [signed-by=/usr/share/keyrings/hashicorp-archive-keyring.gpg] https://apt.releases.hashicorp.com $(lsb_release -cs) main" | sudo tee /etc/apt/sources.list.d/hashicorp.list
+sudo apt-get update && sudo apt-get install -y terraform
+```
 
-# Create and activate a virtual environment
-# On Linux / macOS:
-python3 -m venv .venv
-source .venv/bin/activate
+#### Linux (Fedora / RHEL / CentOS)
+```bash
+sudo dnf install -y dnf-plugins-core
+sudo dnf config-manager --add-repo https://rpm.releases.hashicorp.com/fedora/hashicorp.repo
+sudo dnf -y install terraform
+```
 
-# On Windows:
+#### macOS (via Homebrew)
+```bash
+brew tap hashicorp/tap
+brew install hashicorp/tap/terraform
+```
+
+#### Windows (via Winget ou Chocolatey)
+```powershell
+# Via Winget:
+winget install HashiCorp.Terraform
+
+# Ou via Chocolatey:
+choco install terraform
+```
+
+---
+
+### Validar a Instalação
+Em qualquer sistema operacional, abra um novo terminal e execute:
+```bash
+terraform version
+```
+
+---
+
+## 3. Como Subir e Gerenciar o Ministack
+
+O Ministack emula as APIs da AWS localmente e se comunica com o Docker host para criar os containers dos serviços (como PostgreSQL para o RDS e Redis para o ElastiCache).
+
+### Iniciar o Ministack:
+```bash
+cd ministack
+docker compose up -d
+```
+
+### Verificar o status:
+```bash
+# Ver se o container está rodando:
+docker ps
+
+# Acompanhar os logs do Ministack em tempo real:
+docker compose logs -f
+```
+
+### Parar o Ministack:
+```bash
+docker compose down
+```
+
+---
+
+## 4. Ciclo de Comandos do Terraform no Dia a Dia
+
+Os comandos a seguir são **idênticos em qualquer sistema operacional** (Linux, macOS ou Windows).
+
+Navegue até o diretório `terraform/`:
+```bash
+cd terraform
+```
+
+### 1. Inicialização (`init`)
+Baixa o provider oficial da AWS e prepara o diretório de trabalho:
+```bash
+terraform init
+```
+
+### 2. Planejamento (`plan`)
+Mostra um resumo detalhado de tudo que será criado, modificado ou destruído sem aplicar nenhuma alteração:
+```bash
+terraform plan -var-file="envs/local.tfvars"
+```
+
+### 3. Aplicação (`apply`)
+Cria os recursos de fato (RDS, ElastiCache, EC2, SQS):
+```bash
+terraform apply -var-file="envs/local.tfvars"
+```
+*(Digite `yes` quando solicitado, ou adicione a flag `-auto-approve`)*
+
+### 4. Destruição (`destroy`)
+Para remover todos os recursos criados e resetar o ambiente:
+```bash
+terraform destroy -var-file="envs/local.tfvars"
+```
+
+---
+
+## 5. Configuração do Ambiente Python (Aplicação & Testes)
+
+Para executar os scripts da pasta `app/` (como o teste do SQS ou o desenvolvimento do backend):
+
+### 1. Criar o Ambiente Virtual (`venv`)
+Na raiz do projeto, execute:
+```bash
 python -m venv .venv
-.venv\Scripts\activate
+```
 
-# Install dependencies
+### 2. Ativar o Ambiente Virtual
+
+* **Linux / macOS:**
+  ```bash
+  source .venv/bin/activate
+  ```
+
+* **Windows (PowerShell):**
+  ```powershell
+  .venv\Scripts\Activate.ps1
+  ```
+  *(Se o PowerShell bloquear a execução de scripts, rode antes uma vez: `Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser`)*
+
+* **Windows (Prompt de Comando / CMD):**
+  ```cmd
+  .venv\Scripts\activate.bat
+  ```
+
+---
+
+### 3. Instalar as Dependências
+Com o ambiente virtual ativado, instale os pacotes necessários:
+```bash
 pip install -r requirements.txt
 ```
 
 ---
 
-## Step 3: Start the FastAPI Application
+### 4. Configurar as Variáveis de Ambiente
+O projeto já conta com o arquivo [`app/.env`](app/.env) configurado para desenvolvimento local. Caso precise recriá-lo a partir do modelo:
 
-In **Terminal 2** (with the virtual environment activated):
-
-```bash
-uvicorn api.main:app --reload --port 8000
-```
-
-- API Base URL: `http://localhost:8000`
-- Interactive OpenAPI Documentation (Swagger UI): `http://localhost:8000/docs`
-- Healthcheck endpoint: `http://localhost:8000/health`
-
----
-
-## Step 4: Start the Standalone Evaluation Worker
-
-In **Terminal 3**:
-
-```bash
-# Navigate to the backend directory and activate the virtual environment
-cd backend
-
-# On Linux / macOS:
-source .venv/bin/activate
-
-# On Windows:
-.venv\Scripts\activate
-
-# Start the worker process
-python -m worker.main
-```
-
-The worker connects to the SQS queue (`sqlarena-submissions-queue`) and begins long-polling for student query submissions.
+* **Linux / macOS:**
+  ```bash
+  cp app/.env.example app/.env
+  ```
+* **Windows (PowerShell):**
+  ```powershell
+  Copy-Item app\.env.example app\.env
+  ```
 
 ---
 
-## Step 5: End-to-End Testing Scenarios
-
-All endpoints can be exercised via the interactive Swagger UI at `http://localhost:8000/docs` or using `curl`.
-
-### 5.1 Register and Authenticate a Teacher
-
-1. Register a teacher account:
-
+### 5. Executar os Testes do SQS
+Com o Ministack em execução e a infraestrutura aplicada pelo Terraform, execute:
 ```bash
-curl -X POST "http://localhost:8000/auth/register" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "email": "teacher@example.com",
-    "password": "securePassword123",
-    "role": "teacher"
-  }'
-```
-
-2. Obtain a stateless JWT access token:
-
-```bash
-curl -X POST "http://localhost:8000/auth/login" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "email": "teacher@example.com",
-    "password": "securePassword123"
-  }'
-```
-
-Copy the returned `access_token`.
-
----
-
-### 5.2 Teacher Registers a SQL Exercise
-
-Sample schema and data files are located in `backend/samples/`:
-- `backend/samples/ddl_sample.sql` (defines `customers` and `orders` tables)
-- `backend/samples/dml_sample.sql` (seeds rows into `customers` and `orders`)
-
-Using `curl` from the repository root (replace `<TEACHER_TOKEN>` with the token from Step 5.1):
-
-```bash
-curl -X POST "http://localhost:8000/questions" \
-  -H "Authorization: Bearer <TEACHER_TOKEN>" \
-  -F "title=Top Customers by Spending" \
-  -F "context=Calculate total purchase amounts per customer, ordered from highest to lowest." \
-  -F "expected_query=SELECT c.name, SUM(o.amount) AS total FROM customers c JOIN orders o ON c.id = o.customer_id GROUP BY c.name ORDER BY total DESC;" \
-  -F "timeout_seconds=5" \
-  -F "ddl_file=@backend/samples/ddl_sample.sql" \
-  -F "dml_file=@backend/samples/dml_sample.sql"
-```
-
-Execution flow:
-1. The API uploads both `.sql` scripts to S3.
-2. A record is inserted into RDS 1 with status `creating_tables`.
-3. A background task creates the isolated schema `question_1` in RDS 2, executes the DDL and batch DML, updates the question status to `ready` in RDS 1, and invalidates the Redis cache.
-
----
-
-### 5.3 Register and Authenticate a Student
-
-1. Register a student account:
-
-```bash
-curl -X POST "http://localhost:8000/auth/register" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "email": "student@example.com",
-    "password": "securePassword123",
-    "role": "student"
-  }'
-```
-
-2. Authenticate as the student:
-
-```bash
-curl -X POST "http://localhost:8000/auth/login" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "email": "student@example.com",
-    "password": "securePassword123"
-  }'
-```
-
-Copy the returned student `access_token`.
-
----
-
-### 5.4 Student Views Catalog and Question Context (Cache-Aside Verification)
-
-1. Fetch question catalog:
-
-```bash
-curl -X GET "http://localhost:8000/questions" \
-  -H "Authorization: Bearer <STUDENT_TOKEN>"
-```
-
-- Initial request: Cache miss against Redis; reads from RDS 1 and populates Redis with a 300-second TTL.
-- Subsequent requests: Cache hit served directly from Redis.
-
-2. Fetch question context (omits `expected_query`):
-
-```bash
-curl -X GET "http://localhost:8000/questions/1" \
-  -H "Authorization: Bearer <STUDENT_TOKEN>"
+python app/sqs/main.py
 ```
 
 ---
 
-### 5.5 Student Submits a Correct Query (Full Match)
+## 6. Como Funciona o EC2 (Local vs Nuvem)
 
-Submit the solution query:
-
-```bash
-curl -X POST "http://localhost:8000/questions/1/submit" \
-  -H "Authorization: Bearer <STUDENT_TOKEN>" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "query": "SELECT c.name, SUM(o.amount) AS total FROM customers c JOIN orders o ON c.id = o.customer_id GROUP BY c.name ORDER BY total DESC;"
-  }'
-```
-
-Response: Returns HTTP `202 Accepted` with a `submission_id`.
-
-In **Terminal 3 (Worker)**, observe the real-time processing:
-1. The message is consumed from SQS.
-2. The student query is executed in RDS 2 with `SET TRANSACTION READ ONLY;`, `SET statement_timeout = 5000;`, and `SET search_path TO question_1;`.
-3. The result set is compared against the reference output.
-4. Similarity evaluation produces: `Score: 100.00% (Status: SUCCESS)`.
-5. An immutable audit record is written to DynamoDB.
-6. The student's best score is updated in RDS 1.
+### 1. No Ambiente Local (Ministack)
+No desenvolvimento local, o Ministack **emula a API do EC2** (gerando IDs e metadados para que o Terraform funcione sem erros), mas **não sobe uma máquina virtual**:
+* Os containers Docker ativos são os que exigem serviços de dados reais: **RDS (Postgres)**, **ElastiCache (Redis)** e o gateway do **Ministack (SQS/APIs)**.
+* **O seu ambiente de execução do backend é a sua própria máquina local:** você roda a sua aplicação no seu terminal com o `.venv` ativo, conectando-se aos serviços do Docker através das portas expostas (`localhost:15432` para banco, `localhost:16379` para redis e `localhost:4566` para SQS).
 
 ---
 
-### 5.6 Test Mandatory ORDER BY Enforcement
+### 2. Na AWS Real (Nuvem)
+Quando você aplicar o Terraform na nuvem da Amazon, a AWS criará um servidor virtual real (instância EC2). Você poderá acessar o terminal dessa máquina das seguintes formas:
 
-Submit a query matching the data but omitting the `ORDER BY` clause:
 
-```bash
-curl -X POST "http://localhost:8000/questions/1/submit" \
-  -H "Authorization: Bearer <STUDENT_TOKEN>" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "query": "SELECT c.name, SUM(o.amount) AS total FROM customers c JOIN orders o ON c.id = o.customer_id GROUP BY c.name;"
-  }'
-```
+#### Opção A: Conexão via SSH (Tradicional)
+Para conectar via SSH padrão, certifique-se de ter uma chave `.pem` configurada:
 
-In the Worker logs:
-- The validator detects that the expected output contains multiple rows and that `ORDER BY` is missing.
-- The 20% ordering weight is set to 0.0.
-- The result receives a score of 80.00% and status `WRONG_RESULT`.
+1. **Ajustar as permissões da chave privada (apenas Linux/macOS):**
+   ```bash
+   chmod 400 minha-chave.pem
+   ```
+
+2. **Conectar pelo terminal usando o IP público:**
+   *(O IP público é exibido pelo Terraform no output `ec2_public_ip` após o `terraform apply`)*
+   ```bash
+   # Se a imagem for Ubuntu:
+   ssh -i /caminho/para/minha-chave.pem ubuntu@<IP_PUBLICO_DA_EC2>
+
+   # Se a imagem for Amazon Linux 2023:
+   ssh -i /caminho/para/minha-chave.pem ec2-user@<IP_PUBLICO_DA_EC2>
+   ```
+
+> [!NOTE]
+> Para usar SSH na AWS real, lembre-se de associar o parâmetro `key_name` na declaração da `aws_instance` no arquivo `terraform/ec2.tf`.
 
 ---
 
-### 5.7 Inspect Student Consolidated Score
+#### Opção B: EC2 Instance Connect (Navegador ou CLI)
+Permite conectar sem precisar gerenciar arquivos de chave `.pem`:
 
-Retrieve the student's highest scores from RDS 1:
+* **Pelo Console da AWS:**
+  Acesse **EC2** > **Instâncias** > selecione sua máquina > clique no botão **Conectar** > aba **EC2 Instance Connect** > **Conectar**.
+
+* **Pelo terminal (com AWS CLI instalada):**
+  ```bash
+  aws ec2-instance-connect ssh --instance-id <ID_DA_INSTANCIA>
+  ```
+
+---
+
+#### Opção C: AWS Systems Manager (SSM Session Manager - Mais Seguro)
+A forma recomendada em produção pela AWS, pois **não exige liberar a porta 22 (SSH) na internet** nem gerenciar chaves:
 
 ```bash
-curl -X GET "http://localhost:8000/scores/me" \
-  -H "Authorization: Bearer <STUDENT_TOKEN>"
+aws ssm start-session --target <ID_DA_INSTANCIA>
 ```
 
-Expected output:
-
-```json
-[
-  {
-    "question_id": 1,
-    "best_score": 100.0,
-    "updated_at": "..."
-  }
-]
-```
