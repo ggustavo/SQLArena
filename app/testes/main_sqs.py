@@ -11,9 +11,25 @@ Demonstra:
 """
 
 import json
+import os
+from pathlib import Path
 import sys
 import time
-from queue_manager import SQSQueueManager
+
+# Garante a resolução correta de módulos executando de qualquer diretório
+_testes_dir = Path(__file__).resolve().parent
+_app_dir = _testes_dir.parent
+_project_root = _app_dir.parent
+
+for _p in [str(_project_root), str(_app_dir)]:
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
+
+try:
+    from app.sqs.queue_manager import SQSQueueManager
+except ImportError:
+    from sqs.queue_manager import SQSQueueManager
+
 
 
 def print_separator(title: str):
@@ -70,7 +86,7 @@ def run_tests():
         "submission_id": 1002,
         "student_id": 43,
         "question_id": 10,
-        "query": "SELECT customer_id, COUNT(*) FROM orders GROUP BY customer_id;",
+        "query": "SELECT customer_id, COUNT(*) FROM orders GROUP BY customer_id ORDER BY customer_id;",
         "timestamp": time.time(),
     }
 

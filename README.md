@@ -16,6 +16,8 @@ SQLArena/
 │   ├── providers.tf             # Configuração do provedor AWS e endpoints locais
 │   ├── variables.tf             # Variáveis de ambiente e configuração
 │   ├── outputs.tf               # Dados de saída (URLs de conexão, IDs de recursos)
+│   ├── s3.tf                    # Declaração do bucket S3 das questões
+│   ├── dynamodb.tf              # Declaração da tabela DynamoDB de logs de submissão
 │   ├── rds.tf                   # Declaração da instância do banco de dados (RDS PostgreSQL)
 │   ├── elasticache.tf           # Declaração do cluster Redis (ElastiCache)
 │   ├── ec2.tf                   # Declaração da máquina virtual e firewall (EC2)
@@ -29,10 +31,22 @@ SQLArena/
     ├── .env.example             # Modelo documentado das variáveis de ambiente
     ├── requirements.txt         # Dependências Python centralizadas
     ├── backend/                 # Código da API backend
-    └── sqs/                     # Módulo e testes do Amazon SQS
-        ├── queue_manager.py     # Funções de envio, consumo, purge e DLQ
-        └── main.py              # Script de teste e demonstração da fila
+    ├── s3/                      # Módulo gerenciador do Amazon S3
+    │   ├── __init__.py
+    │   └── s3_manager.py        # Upload, download, leitura e deleção de arquivos SQL
+    ├── sqs/                     # Módulo gerenciador do Amazon SQS
+    │   ├── __init__.py
+    │   └── queue_manager.py     # Funções de envio, consumo, purge e DLQ
+    ├── dynamodb/                # Módulo gerenciador do Amazon DynamoDB
+    │   ├── __init__.py
+    │   └── dynamo_manager.py    # Log imutável de execuções, histórico e erros
+    └── testes/                  # Scripts executáveis de teste e validação
+        ├── __init__.py
+        ├── main_sqs.py          # Script de teste e ciclo de vida do SQS
+        ├── main_s3.py           # Script de teste e ciclo de vida do S3
+        └── main_dynamodb.py     # Script de teste e ciclo de vida do DynamoDB
 ```
+
 
 ---
 
@@ -87,11 +101,11 @@ terraform version
 
 ---
 
-## 3. Como Subir e Gerenciar o Ministack
+## 3. Como Subir e Gerenciar o Ministack & StackPort
 
-O Ministack emula as APIs da AWS localmente e se comunica com o Docker host para criar os containers dos serviços (como PostgreSQL para o RDS e Redis para o ElastiCache).
+O **Ministack** emula as APIs da AWS localmente e cria os containers dos serviços (PostgreSQL para o RDS e Redis para o ElastiCache). O **StackPort** é o painel web integrado para visualizar e interagir com todos os recursos AWS locais.
 
-### Iniciar o Ministack:
+### Iniciar o Ministack e o StackPort:
 ```bash
 cd ministack
 docker compose up -d
@@ -99,14 +113,17 @@ docker compose up -d
 
 ### Verificar o status:
 ```bash
-# Ver se o container está rodando:
+# Ver se os containers (ministack e stackport) estão rodando:
 docker ps
 
-# Acompanhar os logs do Ministack em tempo real:
+# Acompanhar os logs em tempo real:
 docker compose logs -f
 ```
 
-### Parar o Ministack:
+* **Gateway AWS (Ministack):** `http://localhost:4566`
+* **Dashboard Web (StackPort):** `http://localhost:8080`
+
+### Parar os containers:
 ```bash
 docker compose down
 ```
@@ -182,7 +199,7 @@ python -m venv .venv
 ### 3. Instalar as Dependências
 Com o ambiente virtual ativado, instale os pacotes necessários:
 ```bash
-pip install -r requirements.txt
+pip install -r app/requirements.txt
 ```
 
 ---
@@ -201,11 +218,36 @@ O projeto já conta com o arquivo [`app/.env`](app/.env) configurado para desenv
 
 ---
 
-### 5. Executar os Testes do SQS
-Com o Ministack em execução e a infraestrutura aplicada pelo Terraform, execute:
+### 5. Executar os Testes (SQS, S3 & DynamoDB)
+Com o Ministack em execução e a infraestrutura aplicada pelo Terraform, execute os scripts de teste contidos na pasta `app/testes/`:
+
 ```bash
-python app/sqs/main.py
+# Teste de ponta a ponta do Amazon SQS (envio, consumo, atributos, DLQ)
+python app/testes/main_sqs.py
+
+# Teste de ponta a ponta do Amazon S3 (upload schema/data/answer, bootstrapping, deleção)
+python app/testes/main_s3.py
+
+# Teste de ponta a ponta do Amazon DynamoDB (gravação de logs, polling, histórico via GSI)
+python app/testes/main_dynamodb.py
 ```
+
+
+---
+
+### 6. Painel Visual de Recursos AWS (StackPort GUI)
+
+O **[StackPort](https://github.com/DaviReisVieira/stackport)** é gerenciado 100% via Docker Compose junto com o Ministack. Para visualizar e interagir com os recursos emulados localmente de forma gráfica:
+
+* **URL de Acesso:** **[http://localhost:8080](http://localhost:8080)**
+* **Funcionalidades na Interface:**
+  * Navegar pelos buckets S3 e visualizar os scripts SQL salvos;
+  * Inspecionar filas SQS, mensagens recebidas e payloads em tempo real;
+  * Acompanhar status dos serviços locais sem necessidade de comandos adicionais no terminal.
+
+
+
+
 
 ---
 

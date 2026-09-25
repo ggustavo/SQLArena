@@ -22,3 +22,11 @@ app_port          = 8000
 # SQS
 sqs_queue_name    = "sqlarena-submissions-queue"
 
+# S3 (Observação: em produção na AWS, buckets S3 devem ter nome globalmente único)
+s3_bucket_name    = "sqlarena-questions-bucket-prod"
+
+# DynamoDB
+dynamodb_table_name = "sqlarena-submissions-log"
+
+
+

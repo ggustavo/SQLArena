@@ -53,4 +53,26 @@ output "sqs_dlq_url" {
   value       = aws_sqs_queue.submissions_dlq.url
 }
 
+output "s3_bucket_name" {
+  description = "Nome do bucket S3 das questoes"
+  value       = aws_s3_bucket.questions_bucket.id
+}
+
+output "s3_bucket_arn" {
+  description = "ARN do bucket S3 das questoes"
+  value       = aws_s3_bucket.questions_bucket.arn
+}
+
+output "dynamodb_table_name" {
+  description = "Nome da tabela DynamoDB de logs de submissao"
+  value       = aws_dynamodb_table.submissions_log.name
+}
+
+output "dynamodb_table_arn" {
+  description = "ARN da tabela DynamoDB de logs de submissao"
+  value       = aws_dynamodb_table.submissions_log.arn
+}
+
+
+
 

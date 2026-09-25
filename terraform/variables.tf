@@ -88,4 +88,20 @@ variable "sqs_queue_name" {
   default     = "sqlarena-submissions-queue"
 }
 
+# --- Configurações do S3 ---
+variable "s3_bucket_name" {
+  description = "Nome do bucket S3 para armazenar os arquivos SQL das questoes"
+  type        = string
+  default     = "sqlarena-questions-bucket"
+}
+
+# --- Configurações do DynamoDB ---
+variable "dynamodb_table_name" {
+  description = "Nome da tabela DynamoDB para registro imutavel de submissoes"
+  type        = string
+  default     = "sqlarena-submissions-log"
+}
+
+
+
 

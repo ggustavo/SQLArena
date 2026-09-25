@@ -31,7 +31,9 @@ provider "aws" {
       ecr         = var.local_endpoint
       iam         = var.local_endpoint
       s3          = var.local_endpoint
+      dynamodb    = var.local_endpoint
     }
+
   }
 
   default_tags {
