@@ -73,6 +73,14 @@ output "dynamodb_table_arn" {
   value       = aws_dynamodb_table.submissions_log.arn
 }
 
+output "dynamodb_crud_table_name" {
+  description = "Nome da tabela DynamoDB de log de acoes de CRUD"
+  value       = aws_dynamodb_table.crud_actions_log.name
+}
 
+output "dynamodb_crud_table_arn" {
+  description = "ARN da tabela DynamoDB de log de acoes de CRUD"
+  value       = aws_dynamodb_table.crud_actions_log.arn
+}
 
 

@@ -102,6 +102,11 @@ variable "dynamodb_table_name" {
   default     = "sqlarena-submissions-log"
 }
 
+variable "dynamodb_crud_table_name" {
+  description = "Nome da tabela DynamoDB para o log de acoes de CRUD (Requisito 5)"
+  type        = string
+  default     = "sqlarena-crud-actions-log"
+}
 
 
 

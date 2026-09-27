@@ -36,3 +36,41 @@ resource "aws_dynamodb_table" "submissions_log" {
     Description = "Log imutavel de tentativas e execucoes do SQLArena"
   }
 }
+
+# Tabela DynamoDB para o log imutável de ações de CRUD da aplicação
+resource "aws_dynamodb_table" "crud_actions_log" {
+  name         = var.dynamodb_crud_table_name
+  billing_mode = "PAY_PER_REQUEST"
+  hash_key     = "action_id"
+
+  attribute {
+    name = "action_id"
+    type = "S"
+  }
+
+  attribute {
+    name = "entity_id"
+    type = "S"
+  }
+
+  attribute {
+    name = "created_at"
+    type = "S"
+  }
+
+  global_secondary_index {
+    name            = "EntityIndex"
+    hash_key        = "entity_id"
+    range_key       = "created_at"
+    projection_type = "ALL"
+  }
+
+  point_in_time_recovery {
+    enabled = var.is_local ? false : true
+  }
+
+  tags = {
+    Name        = var.dynamodb_crud_table_name
+    Description = "Log imutavel de acoes de CRUD do SQLArena"
+  }
+}

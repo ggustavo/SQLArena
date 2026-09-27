@@ -1,8 +1,12 @@
 """
 Módulo gerenciador do Amazon DynamoDB.
 Compatível com ambiente local (Ministack) e nuvem (AWS real).
-Responsável pelo registro imutável do histórico detalhado de todas as execuções,
-erros do PostgreSQL e resultados das submissões dos alunos.
+Responsável por duas tabelas de log imutável:
+1. Histórico detalhado de execuções, erros do PostgreSQL e resultados das
+   submissões dos alunos (tabela sqlarena-submissions-log).
+2. Log de ações de CRUD da aplicação — create/update/delete de exercícios,
+   indicando tipo da ação, dados manipulados e hora da ação, conforme o
+   Requisito 5 do enunciado (tabela sqlarena-crud-actions-log).
 """
 
 from datetime import datetime, timezone
@@ -11,6 +15,7 @@ import logging
 import os
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
+import uuid
 import boto3
 from botocore.exceptions import ClientError
 from dotenv import load_dotenv
@@ -38,7 +43,7 @@ def _sanitize_for_dynamodb(data: Any) -> Any:
 
 
 class DynamoDBManager:
-    """Gerenciador para operações de log imutável de submissões no Amazon DynamoDB."""
+    """Gerenciador para operações de log imutável de submissões e de ações de CRUD no Amazon DynamoDB."""
 
     def __init__(
         self,
@@ -62,9 +67,15 @@ class DynamoDBManager:
         if self.endpoint_url:
             client_kwargs["endpoint_url"] = self.endpoint_url
 
+        #   Tabela separada para o log de ações de CRUD
+        #   Fica separada da tabela de submissões porque a chave de partição e os padrões de consulta
+        #   são diferentes (aqui é por entidade, lá é por submission_id/aluno)
+        self.crud_table_name = os.getenv("DYNAMODB_CRUD_TABLE_NAME", "sqlarena-crud-actions-log")
+
         self.client = boto3.client("dynamodb", **client_kwargs)
         self.resource = boto3.resource("dynamodb", **client_kwargs)
         self.table = self.resource.Table(self.table_name)
+        self.crud_table = self.resource.Table(self.crud_table_name)
 
     # ----------------------------------------------------------------------
     # Gestão da Tabela
@@ -110,6 +121,50 @@ class DynamoDBManager:
                     logger.error(f"Erro ao criar tabela '{self.table_name}': {create_err}")
                     raise
             logger.error(f"Erro ao verificar tabela '{self.table_name}': {e}")
+            raise
+
+    def ensure_crud_table_exists(self) -> bool:
+        """
+        Verifica se a tabela de log de ações de CRUD existe; caso contrário, cria com
+        chave primária action_id e um GSI para consultar o histórico por entidade
+        (ex: todas as ações sobre o exercício X, em ordem cronológica).
+        """
+        try:
+            self.client.describe_table(TableName=self.crud_table_name)
+            logger.info(f"Tabela DynamoDB '{self.crud_table_name}' já existe e está acessível.")
+            return True
+        except ClientError as e:
+            if e.response.get("Error", {}).get("Code") == "ResourceNotFoundException":
+                logger.info(f"Tabela '{self.crud_table_name}' não encontrada. Criando...")
+                try:
+                    self.client.create_table(
+                        TableName=self.crud_table_name,
+                        BillingMode="PAY_PER_REQUEST",
+                        KeySchema=[
+                            {"AttributeName": "action_id", "KeyType": "HASH"},
+                        ],
+                        AttributeDefinitions=[
+                            {"AttributeName": "action_id", "AttributeType": "S"},
+                            {"AttributeName": "entity_id", "AttributeType": "S"},
+                            {"AttributeName": "created_at", "AttributeType": "S"},
+                        ],
+                        GlobalSecondaryIndexes=[
+                            {
+                                "IndexName": "EntityIndex",
+                                "KeySchema": [
+                                    {"AttributeName": "entity_id", "KeyType": "HASH"},
+                                    {"AttributeName": "created_at", "KeyType": "RANGE"},
+                                ],
+                                "Projection": {"ProjectionType": "ALL"},
+                            }
+                        ],
+                    )
+                    logger.info(f"Tabela '{self.crud_table_name}' criada com sucesso.")
+                    return True
+                except ClientError as create_err:
+                    logger.error(f"Erro ao criar tabela '{self.crud_table_name}': {create_err}")
+                    raise
+            logger.error(f"Erro ao verificar tabela '{self.crud_table_name}': {e}")
             raise
 
     # ----------------------------------------------------------------------
@@ -257,4 +312,84 @@ class DynamoDBManager:
             return response.get("Items", [])
         except ClientError as e:
             logger.error(f"Erro ao listar submissões: {e}")
+            raise
+
+    # ----------------------------------------------------------------------
+    # Log de Ações de CRUD (Requisito 5: toda ação de CRUD da aplicação deve
+    # ser logada, indicando tipo da ação, dados manipulados e hora da ação)
+    # ----------------------------------------------------------------------
+
+    def log_crud_action(
+        self,
+        action_type: str,
+        entity: str,
+        entity_id: Union[str, int],
+        user_id: Union[str, int],
+        changed_data: Optional[Dict[str, Any]] = None,
+        action_id: Optional[str] = None,
+        created_at: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """
+        Registra de forma imutável uma ação de CRUD sobre qualquer entidade da aplicação
+        (ex: exercício, usuário). Atende ao Requisito 5 do enunciado.
+
+        Exemplos de action_type: CREATE_EXERCISE, UPDATE_EXERCISE, DELETE_EXERCISE,
+        SUBMIT_ANSWER, CREATE_USER, etc. — o valor fica a critério de quem chama.
+        """
+        action_id = action_id or f"log_{uuid.uuid4().hex[:16]}"
+        now_iso = created_at or datetime.now(timezone.utc).isoformat()
+
+        item: Dict[str, Any] = {
+            "action_id": action_id,
+            "action_type": action_type,
+            "entity": entity,
+            "entity_id": str(entity_id),
+            "user_id": str(user_id),
+            "created_at": now_iso,
+        }
+
+        if changed_data:
+            item["changed_data"] = _sanitize_for_dynamodb(changed_data)
+
+        try:
+            self.crud_table.put_item(Item=item)
+            logger.info(f"Ação '{action_type}' sobre {entity}#{entity_id} logada (action_id={action_id}).")
+            return item
+        except ClientError as e:
+            logger.error(f"Erro ao gravar log de CRUD ({action_type} em {entity}#{entity_id}): {e}")
+            raise
+
+    def get_entity_history(
+        self,
+        entity_id: Union[str, int],
+        limit: int = 20,
+    ) -> List[Dict[str, Any]]:
+        """
+        Lista todas as ações de CRUD registradas para uma entidade específica
+        (ex: todo o histórico de alterações do exercício #10), mais recentes primeiro,
+        via GSI EntityIndex.
+        """
+        try:
+            response = self.crud_table.query(
+                IndexName="EntityIndex",
+                KeyConditionExpression="entity_id = :eid",
+                ExpressionAttributeValues={":eid": str(entity_id)},
+                ScanIndexForward=False,
+                Limit=limit,
+            )
+            return response.get("Items", [])
+        except ClientError as e:
+            logger.error(f"Erro ao consultar histórico da entidade #{entity_id}: {e}")
+            raise
+
+    def list_crud_actions(self, limit: int = 50) -> List[Dict[str, Any]]:
+        """
+        Retorna as ações de CRUD mais recentes (Scan limitado), ideal para um painel
+        administrativo de auditoria.
+        """
+        try:
+            response = self.crud_table.scan(Limit=limit)
+            return response.get("Items", [])
+        except ClientError as e:
+            logger.error(f"Erro ao listar ações de CRUD: {e}")
             raise

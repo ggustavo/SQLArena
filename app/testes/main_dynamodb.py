@@ -7,6 +7,8 @@ Demonstra:
 4. Consulta por ID (simulando Polling do Frontend)
 5. Atualização da submissão com resultado do processamento do Worker (acerto e erro com log do PostgreSQL)
 6. Consulta de histórico de tentativas de um aluno via Global Secondary Index (StudentIndex)
+7. Log de ações de CRUD sobre exercícios (CREATE/UPDATE/DELETE) na tabela separada de auditoria
+8. Consulta do histórico de ações de uma entidade via Global Secondary Index (EntityIndex)
 """
 
 import json
@@ -130,8 +132,70 @@ def run_tests():
     for item in history:
         print(f" - Submissão: {item.get('submission_id')} | Status: {item.get('status')} | Correto: {item.get('is_correct')} | Data: {item.get('created_at')}")
 
-    print_separator("8. Resumo Final")
-    print("[✓] Todos os testes das operações com DynamoDB foram concluídos com sucesso!\n")
+    # ------------------------------------------------------------------
+    # 8. Assegurar Existência da Tabela de Log de CRUD
+    # ------------------------------------------------------------------
+    print_separator("8. Verificando / Criando Tabela de Log de CRUD")
+    try:
+        manager.ensure_crud_table_exists()
+        print(f"[✓] Tabela '{manager.crud_table_name}' pronta para gravação de logs de CRUD.")
+    except Exception as e:
+        print(f"[!] Falha ao verificar/criar tabela de CRUD: {e}")
+        sys.exit(1)
+
+    # ------------------------------------------------------------------
+    # 9. Simulação do ciclo de vida de um exercício (CREATE -> UPDATE -> DELETE)
+    # ------------------------------------------------------------------
+    print_separator("9. Registrando Ações de CRUD sobre um Exercício")
+    exercise_id = "exercise_456"
+    professor_id = "professor-7"
+
+    manager.log_crud_action(
+        action_type="CREATE_EXERCISE",
+        entity="exercise",
+        entity_id=exercise_id,
+        user_id=professor_id,
+        changed_data={"title": "Consultas do dia", "difficulty": "medium"},
+    )
+    print(f"[✓] CREATE_EXERCISE registrado para {exercise_id}")
+
+    manager.log_crud_action(
+        action_type="UPDATE_EXERCISE",
+        entity="exercise",
+        entity_id=exercise_id,
+        user_id=professor_id,
+        changed_data={"title": "Consultas do dia (revisado)"},
+    )
+    print(f"[✓] UPDATE_EXERCISE registrado para {exercise_id}")
+
+    manager.log_crud_action(
+        action_type="DELETE_EXERCISE",
+        entity="exercise",
+        entity_id=exercise_id,
+        user_id=professor_id,
+    )
+    print(f"[✓] DELETE_EXERCISE registrado para {exercise_id}")
+
+    manager.log_crud_action(
+        action_type="SUBMIT_ANSWER",
+        entity="submission",
+        entity_id=submission_id,
+        user_id=student_id,
+        changed_data={"question_id": question_id},
+    )
+    print(f"[✓] SUBMIT_ANSWER registrado para {submission_id}")
+
+    # ------------------------------------------------------------------
+    # 10. Consulta de Histórico de Ações da Entidade via GSI (EntityIndex)
+    # ------------------------------------------------------------------
+    print_separator(f"10. Consultando Histórico de Ações do Exercício '{exercise_id}'")
+    entity_history = manager.get_entity_history(exercise_id)
+    print(f"[*] Total de ações encontradas para o exercício: {len(entity_history)}")
+    for item in entity_history:
+        print(f" - {item.get('action_type')} por {item.get('user_id')} em {item.get('created_at')} | dados: {item.get('changed_data')}")
+
+    print_separator("11. Resumo Final")
+    print("[✓] Todos os testes das operações com DynamoDB (submissões + log de CRUD) foram concluídos com sucesso!\n")
 
 
 if __name__ == "__main__":

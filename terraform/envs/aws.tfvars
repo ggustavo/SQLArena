@@ -27,6 +27,7 @@ s3_bucket_name    = "sqlarena-questions-bucket-prod"
 
 # DynamoDB
 dynamodb_table_name = "sqlarena-submissions-log"
+dynamodb_crud_table_name = "sqlarena-crud-actions-log"
 
 
 
