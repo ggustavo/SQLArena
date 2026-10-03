@@ -1,6 +1,8 @@
 """
 Módulo gerenciador do Amazon Simple Storage Service (S3).
 Compatível com ambiente local (Ministack) e nuvem (AWS real).
+Além dos scripts SQL (schema/data/answer) de cada questão, gerencia também o
+dataset CSV anexado à questão — o arquivo binário obrigatório do Requisito 3.
 """
 
 import io
@@ -165,6 +167,19 @@ class S3Manager:
             logger.error(f"Erro ao ler objeto '{key}' do bucket '{self.bucket_name}': {e}")
             raise
 
+    def read_file_bytes(self, key: str) -> bytes:
+        """
+        Lê o conteúdo bruto (binário) de um objeto no S3, sem tentar decodificar como texto.
+        Use para arquivos binários (CSV, imagens, etc.) — read_file_text é só para SQL/texto.
+        """
+        key = key.lstrip("/")
+        try:
+            response = self.s3.get_object(Bucket=self.bucket_name, Key=key)
+            return response["Body"].read()
+        except ClientError as e:
+            logger.error(f"Erro ao ler bytes do objeto '{key}' do bucket '{self.bucket_name}': {e}")
+            raise
+
     def download_file(self, key: str, target_path: Union[str, Path]) -> Path:
         """
         Baixa um objeto do S3 para o sistema de arquivos local.
@@ -286,6 +301,57 @@ class S3Manager:
             "data": self.download_file(f"{prefix}/data.sql", out_dir / "data.sql"),
             "answer": self.download_file(f"{prefix}/answer.sql", out_dir / "answer.sql"),
         }
+
+    # ----------------------------------------------------------------------
+    # Dataset CSV da Questão (Requisito 3: arquivo binário obrigatório)
+    # ----------------------------------------------------------------------
+
+    def upload_question_dataset_csv(
+        self,
+        question_id: Union[int, str],
+        csv_content: Union[bytes, str, Path],
+        filename: str = "dataset.csv",
+    ) -> str:
+        """
+        Faz upload do CSV de dataset de uma questão (o arquivo binário obrigatório do
+        Requisito 3). Fica guardado ao lado dos arquivos .sql, em questions/{id}/{filename},
+        então delete_question_files já remove tudo junto automaticamente.
+
+        Retorna a key no S3 onde o arquivo foi salvo.
+        """
+        key = f"{self._question_key_prefix(question_id)}/{filename}"
+        self.upload_file(key, csv_content, content_type="text/csv; charset=utf-8")
+        logger.info(f"Dataset CSV da questão {question_id} salvo em s3://{self.bucket_name}/{key}")
+        return key
+
+    def has_question_dataset(self, question_id: Union[int, str], filename: str = "dataset.csv") -> bool:
+        """Verifica se a questão já possui um arquivo de dataset CSV anexado."""
+        key = f"{self._question_key_prefix(question_id)}/{filename}"
+        return self.file_exists(key)
+
+    def get_question_dataset_csv_bytes(
+        self,
+        question_id: Union[int, str],
+        filename: str = "dataset.csv",
+    ) -> bytes:
+        """Lê o conteúdo bruto (bytes) do CSV de dataset de uma questão."""
+        key = f"{self._question_key_prefix(question_id)}/{filename}"
+        return self.read_file_bytes(key)
+
+    def download_question_dataset_csv(
+        self,
+        question_id: Union[int, str],
+        target_dir: Union[str, Path],
+        filename: str = "dataset.csv",
+    ) -> Path:
+        """
+        Baixa o CSV de dataset de uma questão para uma pasta local — usado pelo worker
+        no bootstrapping antes de processar o arquivo.
+        """
+        key = f"{self._question_key_prefix(question_id)}/{filename}"
+        out_dir = Path(target_dir)
+        out_dir.mkdir(parents=True, exist_ok=True)
+        return self.download_file(key, out_dir / filename)
 
     def delete_question_files(self, question_id: Union[int, str]) -> int:
         """

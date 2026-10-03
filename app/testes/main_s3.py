@@ -6,8 +6,10 @@ Demonstra:
 3. Upload dos scripts SQL de uma questão (schema.sql, data.sql, answer.sql)
 4. Leitura e validação do conteúdo dos arquivos diretamente do S3
 5. Simulação de Bootstrapping do Worker (download dos arquivos para disco local)
-6. Listagem e checagem de existência de objetos
-7. Deleção dos arquivos da questão (ciclo de vida de exclusão)
+6. Upload do dataset CSV da questão (arquivo binário obrigatório — Requisito 3)
+7. Notificação ao Worker via SQS após o upload do binário (desacoplamento — Requisito 6)
+8. Listagem e checagem de existência de objetos
+9. Deleção dos arquivos da questão, incluindo o CSV (ciclo de vida de exclusão)
 """
 
 import os
@@ -26,8 +28,10 @@ for _p in [str(_project_root), str(_app_dir)]:
 
 try:
     from app.s3.s3_manager import S3Manager
+    from app.sqs.queue_manager import SQSQueueManager
 except ImportError:
     from s3.s3_manager import S3Manager
+    from sqs.queue_manager import SQSQueueManager
 
 
 
@@ -130,20 +134,63 @@ ORDER BY total_gasto DESC;
             print("[*] Diretório temporário de bootstrapping limpo.")
 
     # ------------------------------------------------------------------
-    # 6. Listagem de Arquivos no Bucket
+    # 6. Upload do Dataset CSV (Arquivo Binário Obrigatório — Requisito 3)
     # ------------------------------------------------------------------
-    print_separator("6. Listando Todos os Arquivos no Bucket")
+    print_separator(f"6. Upload do Dataset CSV para Questão #{question_id}")
+    csv_content = (
+        "order_id,customer_id,total,status\n"
+        "1,101,150.00,completed\n"
+        "2,102,89.90,pending\n"
+        "3,101,230.50,completed\n"
+        "4,103,45.00,completed\n"
+    ).encode("utf-8")
+
+    dataset_key = manager.upload_question_dataset_csv(question_id, csv_content)
+    print(f"[✓] DATASET -> s3://{manager.bucket_name}/{dataset_key}")
+
+    assert manager.has_question_dataset(question_id), "O dataset deveria existir após o upload."
+    downloaded_bytes = manager.get_question_dataset_csv_bytes(question_id)
+    assert downloaded_bytes == csv_content, "Conteúdo do CSV baixado não bate com o original."
+    print(f"[✓] Dataset lido de volta do S3 ({len(downloaded_bytes)} bytes) e validado.")
+
+    # ------------------------------------------------------------------
+    # 7. Notificando o Worker via SQS (Desacoplamento — Requisito 6)
+    # ------------------------------------------------------------------
+    print_separator("7. Notificando o Worker via SQS")
+    try:
+        sqs = SQSQueueManager()
+        before = sqs.get_queue_stats()
+        sqs.send_message(
+            payload={
+                "event_type": "DATASET_UPLOADED",
+                "question_id": question_id,
+                "s3_key": dataset_key,
+                "file_type": "csv",
+            },
+            attributes={"event_type": "DATASET_UPLOADED"},
+        )
+        after = sqs.get_queue_stats()
+        print(f"[✓] Mensagem enviada para a fila '{sqs.queue_name}'.")
+        print(f"[*] Mensagens disponíveis antes: {before.get('mensagens_disponiveis')} | depois: {after.get('mensagens_disponiveis')}")
+    except Exception as e:
+        print(f"[!] Não foi possível notificar o SQS (Ministack rodando?): {e}")
+        print("[*] Seguindo mesmo assim — essa etapa depende da fila configurada pela")
+
+    # ------------------------------------------------------------------
+    # 8. Listagem de Arquivos no Bucket
+    # ------------------------------------------------------------------
+    print_separator("8. Listando Todos os Arquivos no Bucket")
     all_files = manager.list_files()
     print(f"[*] Total de arquivos encontrados: {len(all_files)}")
     for key in all_files:
         print(f" - {key}")
 
     # ------------------------------------------------------------------
-    # 7. Ciclo de Vida: Deleção de Questão
+    # 9. Ciclo de Vida: Deleção de Questão (remove SQL + CSV juntos)
     # ------------------------------------------------------------------
-    print_separator(f"7. Excluindo Arquivos da Questão #{question_id} (Deleção de Questão)")
+    print_separator(f"9. Excluindo Arquivos da Questão #{question_id} (Deleção de Questão)")
     deleted_count = manager.delete_question_files(question_id)
-    print(f"[✓] {deleted_count} arquivo(s) removido(s) do S3.")
+    print(f"[✓] {deleted_count} arquivo(s) removido(s) do S3 (SQL + CSV juntos).")
 
     # Confirmação
     remaining = manager.list_files(prefix=f"questions/{question_id}")
@@ -151,8 +198,8 @@ ORDER BY total_gasto DESC;
     assert len(remaining) == 0, "Deveriam existir 0 arquivos após a deleção."
     print("[✓] Exclusão confirmada no S3 com sucesso!")
 
-    print_separator("8. Resumo Final")
-    print("[✓] Todos os testes das operações com S3 foram concluídos com sucesso!\n")
+    print_separator("10. Resumo Final")
+    print("[✓] Todos os testes das operações com S3 (incluindo dataset CSV) foram concluídos com sucesso!\n")
 
 
 if __name__ == "__main__":
