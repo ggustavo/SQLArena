@@ -1,11 +1,15 @@
 """
 Módulo gerenciador do Amazon Simple Storage Service (S3).
 Compatível com ambiente local (Ministack) e nuvem (AWS real).
-Além dos scripts SQL (schema/data/answer) de cada questão, gerencia também o
-dataset CSV anexado à questão — o arquivo binário obrigatório do Requisito 3.
+
+Gerencia os scripts SQL de cada questão:
+- questions/{question_id}/schema.sql (DDL)
+- questions/{question_id}/data.sql (DML de carga inicial)
+- questions/{question_id}/answer.sql (Consulta gabarito canônica com ORDER BY)
+
+Todos os dados residem como comandos SQL puros, sem arquivos CSV externos.
 """
 
-import io
 import logging
 import os
 from pathlib import Path
@@ -27,7 +31,7 @@ logger = logging.getLogger("S3Manager")
 
 
 class S3Manager:
-    """Gerenciador completo para operações em buckets e objetos S3 no SQLArena."""
+    """Gerenciador para operações em buckets e objetos S3 no SQLArena."""
 
     def __init__(
         self,
@@ -112,7 +116,6 @@ class S3Manager:
         """
         key = key.lstrip("/")
         try:
-            # Verifica se é um arquivo existente no disco
             is_local_file = False
             if isinstance(content_or_path, Path):
                 is_local_file = content_or_path.is_file()
@@ -169,8 +172,7 @@ class S3Manager:
 
     def read_file_bytes(self, key: str) -> bytes:
         """
-        Lê o conteúdo bruto (binário) de um objeto no S3, sem tentar decodificar como texto.
-        Use para arquivos binários (CSV, imagens, etc.) — read_file_text é só para SQL/texto.
+        Lê o conteúdo bruto (bytes) de um objeto no S3.
         """
         key = key.lstrip("/")
         try:
@@ -237,7 +239,7 @@ class S3Manager:
             raise
 
     # ----------------------------------------------------------------------
-    # Operações Específicas do Domínio SQLArena (Questões: schema, data, answer)
+    # Operações de Domínio SQLArena (Questões: schema.sql, data.sql, answer.sql)
     # ----------------------------------------------------------------------
 
     @staticmethod
@@ -253,10 +255,10 @@ class S3Manager:
         answer_sql: Union[str, bytes, Path],
     ) -> Dict[str, str]:
         """
-        Salva o trio de arquivos de uma questão no S3:
-        1. schema.sql (DDL)
-        2. data.sql (DML de carga)
-        3. answer.sql (Gabarito da consulta)
+        Salva o trio de arquivos SQL puros de uma questão no S3:
+        1. schema.sql (DDL de tabelas e índices)
+        2. data.sql (DML de carga inicial)
+        3. answer.sql (Gabarito da consulta com ORDER BY obrigatório)
         """
         prefix = self._question_key_prefix(question_id)
         keys = {
@@ -269,12 +271,12 @@ class S3Manager:
         self.upload_file(keys["data"], data_sql, content_type="text/x-sql; charset=utf-8")
         self.upload_file(keys["answer"], answer_sql, content_type="text/x-sql; charset=utf-8")
 
-        logger.info(f"Arquivos da questão {question_id} salvos no S3 com sucesso.")
+        logger.info(f"Scripts SQL da questão #{question_id} salvos no S3 com sucesso.")
         return keys
 
     def get_question_sql_files(self, question_id: Union[int, str]) -> Dict[str, str]:
         """
-        Recupera o conteúdo em texto puro dos 3 arquivos SQL de uma questão:
+        Recupera o conteúdo em texto dos 3 arquivos SQL de uma questão:
         retorna dicionário {'schema': str, 'data': str, 'answer': str}.
         """
         prefix = self._question_key_prefix(question_id)
@@ -290,7 +292,7 @@ class S3Manager:
         target_dir: Union[str, Path],
     ) -> Dict[str, Path]:
         """
-        Baixa os 3 arquivos SQL de uma questão para uma pasta local (útil para bootstrapping de workers).
+        Baixa os 3 arquivos SQL de uma questão para uma pasta local (bootstrapping de workers).
         """
         prefix = self._question_key_prefix(question_id)
         out_dir = Path(target_dir)
@@ -302,66 +304,15 @@ class S3Manager:
             "answer": self.download_file(f"{prefix}/answer.sql", out_dir / "answer.sql"),
         }
 
-    # ----------------------------------------------------------------------
-    # Dataset CSV da Questão (Requisito 3: arquivo binário obrigatório)
-    # ----------------------------------------------------------------------
-
-    def upload_question_dataset_csv(
-        self,
-        question_id: Union[int, str],
-        csv_content: Union[bytes, str, Path],
-        filename: str = "dataset.csv",
-    ) -> str:
-        """
-        Faz upload do CSV de dataset de uma questão (o arquivo binário obrigatório do
-        Requisito 3). Fica guardado ao lado dos arquivos .sql, em questions/{id}/{filename},
-        então delete_question_files já remove tudo junto automaticamente.
-
-        Retorna a key no S3 onde o arquivo foi salvo.
-        """
-        key = f"{self._question_key_prefix(question_id)}/{filename}"
-        self.upload_file(key, csv_content, content_type="text/csv; charset=utf-8")
-        logger.info(f"Dataset CSV da questão {question_id} salvo em s3://{self.bucket_name}/{key}")
-        return key
-
-    def has_question_dataset(self, question_id: Union[int, str], filename: str = "dataset.csv") -> bool:
-        """Verifica se a questão já possui um arquivo de dataset CSV anexado."""
-        key = f"{self._question_key_prefix(question_id)}/{filename}"
-        return self.file_exists(key)
-
-    def get_question_dataset_csv_bytes(
-        self,
-        question_id: Union[int, str],
-        filename: str = "dataset.csv",
-    ) -> bytes:
-        """Lê o conteúdo bruto (bytes) do CSV de dataset de uma questão."""
-        key = f"{self._question_key_prefix(question_id)}/{filename}"
-        return self.read_file_bytes(key)
-
-    def download_question_dataset_csv(
-        self,
-        question_id: Union[int, str],
-        target_dir: Union[str, Path],
-        filename: str = "dataset.csv",
-    ) -> Path:
-        """
-        Baixa o CSV de dataset de uma questão para uma pasta local — usado pelo worker
-        no bootstrapping antes de processar o arquivo.
-        """
-        key = f"{self._question_key_prefix(question_id)}/{filename}"
-        out_dir = Path(target_dir)
-        out_dir.mkdir(parents=True, exist_ok=True)
-        return self.download_file(key, out_dir / filename)
-
     def delete_question_files(self, question_id: Union[int, str]) -> int:
         """
-        Remove todos os arquivos associados a uma questão do S3 (atende à deleção descrita nos requisitos).
+        Remove todos os arquivos associados a uma questão do S3 (schema.sql, data.sql, answer.sql).
         Retorna o número de arquivos removidos.
         """
         prefix = self._question_key_prefix(question_id)
         files = self.list_files(prefix=prefix)
         if not files:
-            logger.info(f"Nenhum arquivo encontrado para a questão {question_id} no S3.")
+            logger.info(f"Nenhum arquivo encontrado para a questão #{question_id} no S3.")
             return 0
 
         delete_payload = [{"Key": k} for k in files]
@@ -371,8 +322,8 @@ class S3Manager:
                 Delete={"Objects": delete_payload},
             )
             deleted_count = len(response.get("Deleted", []))
-            logger.info(f"Removidos {deleted_count} arquivos da questão {question_id} do S3.")
+            logger.info(f"Removidos {deleted_count} arquivos da questão #{question_id} do S3.")
             return deleted_count
         except ClientError as e:
-            logger.error(f"Erro ao remover arquivos da questão {question_id}: {e}")
+            logger.error(f"Erro ao remover arquivos da questão #{question_id}: {e}")
             raise

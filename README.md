@@ -40,11 +40,20 @@ SQLArena/
     ├── dynamodb/                # Módulo gerenciador do Amazon DynamoDB
     │   ├── __init__.py
     │   └── dynamo_manager.py    # Log imutável de execuções, histórico e erros
-    └── testes/                  # Scripts executáveis de teste e validação
+    ├── testes/                  # Scripts executáveis de teste e validação
         ├── __init__.py
         ├── main_sqs.py          # Script de teste e ciclo de vida do SQS
         ├── main_s3.py           # Script de teste e ciclo de vida do S3
         └── main_dynamodb.py     # Script de teste e ciclo de vida do DynamoDB
+│
+└── frontend/                    # Single Page Application (React 19 + Vite 6 + Tailwind CSS v4)
+    ├── src/
+    │   ├── components/          # Componentes (Navbar, SqlEditor, RelationalDiagram, HistoryModal...)
+    │   ├── pages/               # Páginas (LoginPage, QuestionDashboard, ArenaPage, ProfessorPage...)
+    │   ├── services/            # Camada de serviços desacoplada (api, auth, questions, submissions, categories...)
+    │   └── data/                # Dados mockados para desenvolvimento frontend
+    ├── package.json
+    └── vite.config.js
 ```
 
 

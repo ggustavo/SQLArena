@@ -1,0 +1,139 @@
+import api, { USE_MOCK } from './api';
+import { MOCK_QUESTIONS } from '../data/mockData';
+import { logCrudAction } from './auditService';
+
+// Mantém as questões em memória local para simular criação/edição em tempo de execução
+let questionsCache = [...MOCK_QUESTIONS];
+
+/**
+ * Busca todas as questões disponíveis.
+ * Alunos só veem status "PUBLISHED".
+ * Professores veem "DRAFT", "READY" e "PUBLISHED".
+ */
+export async function getQuestions(userRole = 'STUDENT') {
+  if (USE_MOCK) {
+    await new Promise((res) => setTimeout(res, 100));
+    // Retorna todas as questões disponíveis
+    return [...questionsCache];
+  }
+
+  // --- Backend Real ---
+  const response = await api.get('/questions');
+  return response.data;
+}
+
+/**
+ * Busca detalhes de uma questão pelo ID (enunciado, tabelas, colunas).
+ */
+export async function getQuestionById(id) {
+  if (USE_MOCK) {
+    await new Promise((res) => setTimeout(res, 200));
+    const found = questionsCache.find((q) => q.id === Number(id));
+    if (!found) throw new Error('Questão não encontrada');
+    return { ...found };
+  }
+
+  // --- Backend Real ---
+  const response = await api.get(`/questions/${id}`);
+  return response.data;
+}
+
+/**
+ * Cria uma nova questão (Visão do Professor).
+ * Recebe metadados e os arquivos SQL (schema.sql, data.sql, answer.sql, dataset.csv).
+ */
+export async function createQuestion(formData) {
+  if (USE_MOCK) {
+    await new Promise((res) => setTimeout(res, 800));
+
+    // Validação do Requisito 5: answer.sql DEVE conter ORDER BY
+    if (formData.answerSql && !formData.answerSql.toUpperCase().includes('ORDER BY')) {
+      throw new Error(
+        'Erro de Validação (Requisito 5): A consulta gabarito (answer.sql) DEVE conter cláusula ORDER BY para garantir determinismo.'
+      );
+    }
+
+    const newId = questionsCache.length + 1;
+    const newQuestion = {
+      id: newId,
+      title: formData.title || `Questão SQL #${newId}`,
+      difficulty: formData.difficulty || 'Médio',
+      categories: formData.categories || (formData.category ? [formData.category] : ['Consultas Básicas']),
+      category: (formData.categories && formData.categories[0]) || formData.category || 'Geral',
+      status: 'PUBLISHED',
+      publishedStatus: 'PUBLISHED',
+      description: formData.description || 'Descrição do exercício...',
+      tables: formData.tables || [
+        {
+          name: 'dados_exemplo',
+          columns: [{ name: 'id', type: 'INT' }, { name: 'valor', type: 'TEXT' }],
+          sampleRows: [{ id: 1, valor: 'Exemplo A' }],
+        },
+      ],
+      schemaSql: formData.schemaSql || '',
+      dataSql: formData.dataSql || '',
+      answerSql: formData.answerSql || '',
+      xpReward: formData.xpReward || 50,
+      starterSql: `-- Escreva sua consulta SQL para resolver o problema\nSELECT * FROM autores;`,
+    };
+
+    questionsCache.unshift(newQuestion);
+
+    // Registra log de criação de exercício
+    await logCrudAction({
+      actionType: 'CREATE_EXERCISE',
+      entityId: `exercise_${newId}`,
+      details: `Criada questão '${newQuestion.title}' com sucesso.`,
+    });
+
+    return newQuestion;
+  }
+
+  // --- Backend Real ---
+  const response = await api.post('/questions', formData);
+  return response.data;
+}
+
+/**
+ * Publica uma questão (muda status de READY para PUBLISHED).
+ */
+export async function publishQuestion(id) {
+  if (USE_MOCK) {
+    await new Promise((res) => setTimeout(res, 350));
+    const q = questionsCache.find((item) => item.id === Number(id));
+    if (!q) throw new Error('Questão não encontrada');
+    q.status = 'PUBLISHED';
+
+    await logCrudAction({
+      actionType: 'PUBLISH_EXERCISE',
+      entityId: `exercise_${id}`,
+      details: `Questão '${q.title}' publicada para os alunos.`,
+    });
+
+    return q;
+  }
+
+  const response = await api.post(`/questions/${id}/publish`);
+  return response.data;
+}
+
+/**
+ * Deleta uma questão.
+ */
+export async function deleteQuestion(id) {
+  if (USE_MOCK) {
+    await new Promise((res) => setTimeout(res, 400));
+    questionsCache = questionsCache.filter((item) => item.id !== Number(id));
+
+    await logCrudAction({
+      actionType: 'DELETE_EXERCISE',
+      entityId: `exercise_${id}`,
+      details: `Questão #${id} removida do RDS e arquivos excluídos do S3. Mensagem DELETE enviada aos Workers.`,
+    });
+
+    return true;
+  }
+
+  const response = await api.delete(`/questions/${id}`);
+  return response.data;
+}
