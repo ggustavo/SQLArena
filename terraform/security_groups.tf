@@ -87,3 +87,73 @@ resource "aws_security_group" "worker_sg" {
     Name = "${var.project_name}-worker-sg"
   }
 }
+
+# Security Group do RDS PostgreSQL (Porta 5432)
+resource "aws_security_group" "rds_sg" {
+  name        = "${var.project_name}-rds-sg"
+  description = "Regras de firewall para o RDS PostgreSQL"
+  vpc_id      = aws_vpc.main.id
+
+  ingress {
+    description     = "Trafego PostgreSQL vindo da Web API"
+    from_port       = 5432
+    to_port         = 5432
+    protocol        = "tcp"
+    security_groups = [aws_security_group.web_sg.id]
+  }
+
+  ingress {
+    description     = "Trafego PostgreSQL vindo dos Workers"
+    from_port       = 5432
+    to_port         = 5432
+    protocol        = "tcp"
+    security_groups = [aws_security_group.worker_sg.id]
+  }
+
+  egress {
+    description = "Trafego de saida liberado"
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  tags = {
+    Name = "${var.project_name}-rds-sg"
+  }
+}
+
+# Security Group do ElastiCache Redis (Porta 6379)
+resource "aws_security_group" "redis_sg" {
+  name        = "${var.project_name}-redis-sg"
+  description = "Regras de firewall para o cluster ElastiCache Redis"
+  vpc_id      = aws_vpc.main.id
+
+  ingress {
+    description     = "Trafego Redis vindo da Web API"
+    from_port       = 6379
+    to_port         = 6379
+    protocol        = "tcp"
+    security_groups = [aws_security_group.web_sg.id]
+  }
+
+  ingress {
+    description     = "Trafego Redis vindo dos Workers"
+    from_port       = 6379
+    to_port         = 6379
+    protocol        = "tcp"
+    security_groups = [aws_security_group.worker_sg.id]
+  }
+
+  egress {
+    description = "Trafego de saida liberado"
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  tags = {
+    Name = "${var.project_name}-redis-sg"
+  }
+}

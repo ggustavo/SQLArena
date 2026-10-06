@@ -11,6 +11,13 @@ resource "aws_launch_template" "worker_lt" {
 
   vpc_security_group_ids = [aws_security_group.worker_sg.id]
 
+  dynamic "iam_instance_profile" {
+    for_each = var.is_local ? [] : [1]
+    content {
+      name = var.iam_instance_profile_name
+    }
+  }
+
   user_data = base64encode(<<-EOF
               #!/bin/bash
               set -e

@@ -88,6 +88,12 @@ variable "app_port" {
   default     = 8000
 }
 
+variable "iam_instance_profile_name" {
+  description = "Nome do IAM Instance Profile anexado aos nós EC2 (no AWS Academy usar 'LabInstanceProfile')"
+  type        = string
+  default     = "LabInstanceProfile"
+}
+
 # --- Configurações do SQS ---
 variable "sqs_queue_name" {
   description = "Nome da fila SQS para processamento assíncrono"
