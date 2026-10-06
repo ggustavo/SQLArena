@@ -24,41 +24,39 @@ set -e
 exec > >(tee -a /var/log/user_data.log /var/log/cloud-init-output.log) 2>&1
 echo "=== Inicializando no Worker SQLArena (Processamento SQS) ==="
 
-# 1. Atualizar SO e instalar dependencias
+# 1. Atualizar SO e instalar dependencias (incluindo PostgreSQL local para Sandbox)
 sudo apt-get update -y
-sudo DEBIAN_FRONTEND=noninteractive apt-get install -y git python3 python3-pip python3-venv libpq-dev
+sudo DEBIAN_FRONTEND=noninteractive apt-get install -y git python3 python3-pip python3-venv libpq-dev postgresql postgresql-contrib
 
-# 2. Clonar repositorio
+# 2. Inicializar e configurar PostgreSQL Local na EC2 do Worker
+sudo systemctl enable postgresql
+sudo systemctl start postgresql
+sudo -u postgres psql -c "CREATE USER sandbox WITH PASSWORD 'sandboxpass';" || true
+sudo -u postgres psql -c "CREATE DATABASE sandbox_db OWNER sandbox;" || true
+sudo -u postgres psql -c "GRANT ALL PRIVILEGES ON DATABASE sandbox_db TO sandbox;" || true
+
+# 3. Clonar repositorio
 sudo mkdir -p /opt/sqlarena
 cd /opt
 sudo rm -rf sqlarena
 git clone -b ${var.github_branch} ${var.github_repo_url} /opt/sqlarena
 cd /opt/sqlarena
 
-# 3. Preparar virtualenv Python e dependencias
+# 4. Preparar virtualenv Python e dependencias
 python3 -m venv app/.venv
 source app/.venv/bin/activate
 pip install --upgrade pip
 pip install -r app/requirements.txt
 
-# 4. Escrever arquivo de configuracao app/.env
+# 5. Escrever arquivo de configuracao app/.env (100% Desacoplado de RDS e Redis)
 cat <<EOT > app/.env
 ENVIRONMENT=production
-DATABASE_URL=postgresql+psycopg2://${var.db_username}:${var.db_password}@${aws_db_instance.postgres.address}:${aws_db_instance.postgres.port}/${var.db_name}
-RDS_HOST=${aws_db_instance.postgres.address}
-RDS_PORT=${aws_db_instance.postgres.port}
-RDS_USER=${var.db_username}
-RDS_PASSWORD=${var.db_password}
-RDS_DB_NAME=${var.db_name}
-
-REDIS_URL=redis://${aws_elasticache_cluster.redis.cache_nodes[0].address}:6379/0
-REDIS_HOST=${aws_elasticache_cluster.redis.cache_nodes[0].address}
-REDIS_PORT=6379
+SANDBOX_DATABASE_URL=postgresql://sandbox:sandboxpass@localhost:5432/sandbox_db
+BACKEND_INTERNAL_URL=http://${aws_lb.alb.dns_name}
+INTERNAL_API_KEY=sqlarena-internal-service-secret-key-32chars
 
 AWS_REGION=${var.aws_region}
 S3_BUCKET_NAME=${var.s3_bucket_name}
-DYNAMO_SUBMISSIONS_TABLE=${aws_dynamodb_table.submissions_log.name}
-DYNAMO_CRUD_TABLE_NAME=${aws_dynamodb_table.crud_actions_log.name}
 SQS_QUEUE_NAME=${aws_sqs_queue.submissions_queue.name}
 SQS_DLQ_NAME=${aws_sqs_queue.submissions_dlq.name}
 EOT

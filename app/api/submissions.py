@@ -1,11 +1,12 @@
 import uuid
 from datetime import datetime, timezone
 from typing import Optional, Dict, Any, List
-from fastapi import APIRouter, Depends, HTTPException, status, Query
+from fastapi import APIRouter, Depends, HTTPException, status, Query, Header
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
+from app.config import settings
 from app.database.session import get_db
-from app.database.models import User, Question
+from app.database.models import User, Question, UserSolvedQuestion
 from app.api.deps import get_current_user
 from app.cache.redis_client import redis_client
 from app.sqs.queue_manager import SQSQueueManager
@@ -23,6 +24,26 @@ class SubmitQueryRequest(BaseModel):
     sql_query: Optional[str] = None
     difficulty: Optional[str] = "Médio"
     questionTitle: Optional[str] = ""
+
+class SubmissionCallbackRequest(BaseModel):
+    submission_id: Optional[str] = None
+    submissionId: Optional[str] = None
+    user_id: Optional[str] = None
+    userId: Optional[str] = None
+    question_id: Optional[int] = None
+    questionId: Optional[int] = None
+    status: str = "DONE"
+    outcome: str = "SUCCESS"
+    is_correct: Optional[bool] = None
+    isCorrect: Optional[bool] = None
+    execution_time_ms: Optional[float] = 0.0
+    executionTimeMs: Optional[float] = 0.0
+    error_message: Optional[str] = None
+    errorMessage: Optional[str] = None
+    columns: List[str] = []
+    rows: List[Dict[str, Any]] = []
+    student_hash: Optional[str] = None
+    studentHash: Optional[str] = None
 
 @router.post("", status_code=status.HTTP_202_ACCEPTED)
 def submit_query(
@@ -121,6 +142,94 @@ def submit_query(
         "submissionId": submission_id,
         "status": "PROCESSING",
         "pollIntervalMs": 1000
+    }
+
+@router.post("/callback", status_code=status.HTTP_200_OK)
+def process_submission_callback(
+    payload: SubmissionCallbackRequest,
+    x_internal_key: Optional[str] = Header(None, alias="x-internal-key"),
+    db: Session = Depends(get_db)
+):
+    """
+    Endpoint interno chamado pelos Workers via HTTP/ALB ao concluir a avaliação.
+    - O Worker avalia 100% no PostgreSQL Local da sua EC2 e repassa o resultado para este endpoint.
+    - O Backend centraliza todas as interações com o RDS, Redis e DynamoDB:
+      1. Se isCorrect: concede +10 XP no RDS e registra em user_solved_questions.
+      2. Atualiza o status da submissão no Redis para o polling do frontend.
+      3. Atualiza o resultado final no Amazon DynamoDB.
+    """
+    # Validação de segurança básica da chave interna
+    if settings.INTERNAL_API_KEY and x_internal_key and x_internal_key != settings.INTERNAL_API_KEY:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Chave de comunicação interna inválida."
+        )
+
+    sub_id = payload.submission_id or payload.submissionId
+    uid = payload.user_id or payload.userId
+    qid = payload.question_id if payload.question_id is not None else payload.questionId
+    is_correct = payload.is_correct if payload.is_correct is not None else (payload.isCorrect or False)
+    exec_time = payload.execution_time_ms if payload.execution_time_ms is not None else (payload.executionTimeMs or 0.0)
+    err_msg = payload.error_message or payload.errorMessage
+    student_hash = payload.student_hash or payload.studentHash
+
+    points_awarded = 0
+
+    # 1. Se acerto inédito: pontua +10 XP no RDS
+    if is_correct and uid and qid:
+        try:
+            solved = db.query(UserSolvedQuestion).filter_by(
+                user_id=uid,
+                question_id=int(qid)
+            ).first()
+
+            if not solved:
+                db.add(UserSolvedQuestion(user_id=uid, question_id=int(qid)))
+                user = db.query(User).filter(User.id == uid).first()
+                if user:
+                    user.score = (user.score or 0) + 10
+                    user.solved_count = (user.solved_count or 0) + 1
+                db.commit()
+                points_awarded = 10
+        except Exception as ex:
+            db.rollback()
+
+    # 2. Atualiza status no Redis para polling do frontend
+    final_data = {
+        "submissionId": sub_id,
+        "userId": uid,
+        "questionId": qid,
+        "status": "DONE",
+        "outcome": payload.outcome,
+        "pointsAwarded": points_awarded,
+        "executionTimeMs": exec_time,
+        "errorMessage": err_msg,
+        "columns": payload.columns,
+        "rows": payload.rows,
+        "strictModeHashMatched": is_correct,
+        "finishedAt": datetime.now(timezone.utc).isoformat(),
+    }
+    if sub_id:
+        redis_client.set_submission_status(sub_id, final_data)
+
+    # 3. Atualiza registro no DynamoDB
+    if sub_id:
+        try:
+            dynamo_manager.update_submission_result(
+                submission_id=sub_id,
+                status=payload.outcome,
+                is_correct=is_correct,
+                execution_time_ms=exec_time,
+                error_message=err_msg,
+                answer_hash=student_hash
+            )
+        except Exception:
+            pass
+
+    return {
+        "success": True,
+        "submissionId": sub_id,
+        "pointsAwarded": points_awarded
     }
 
 @router.get("/{submission_id}/status")

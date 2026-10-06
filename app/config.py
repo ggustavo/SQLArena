@@ -12,13 +12,20 @@ class Settings(BaseSettings):
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24 * 7  # 7 dias
 
-    # PostgreSQL RDS
+    # PostgreSQL RDS (Apenas Backend)
     DATABASE_URL: str = "postgresql+psycopg2://postgres:postgrespassword@localhost:15432/app_db"
     RDS_HOST: str = "localhost"
     RDS_PORT: int = 15432
     RDS_USER: str = "postgres"
     RDS_PASSWORD: str = "postgrespassword"
     RDS_DB_NAME: str = "app_db"
+
+    # PostgreSQL Local (Sandbox exclusivo do Worker)
+    SANDBOX_DATABASE_URL: Optional[str] = None
+
+    # Comunicação Interna Worker -> Backend
+    BACKEND_INTERNAL_URL: str = "http://localhost:8000"
+    INTERNAL_API_KEY: str = "sqlarena-internal-service-secret-key-32chars"
 
     # Redis ElastiCache
     REDIS_URL: str = "redis://localhost:16379/0"

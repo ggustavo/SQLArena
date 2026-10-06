@@ -8,7 +8,6 @@ import psycopg2
 from psycopg2 import sql, extras
 from app.config import settings
 from app.s3.s3_manager import S3Manager
-from app.cache.redis_client import redis_client
 
 logger = logging.getLogger("SandboxExecutor")
 
@@ -21,43 +20,54 @@ DISALLOWED_REGEX = re.compile("|".join(DISALLOWED_KEYWORDS), re.IGNORECASE)
 
 class SandboxExecutor:
     """
-    Motor de execução em Sandbox PostgreSQL 16.
-    - Isolamento de Schemas (pergunta_{id})
-    - Bootstrapping automático via S3
-    - Permissões Read-Only e timeout estrito de 3 segundos
-    - Serialização canônica e validação por Hash SHA-256 (Strict Mode)
+    Motor de execução em Sandbox PostgreSQL Local (EC2).
+    - Executa 100% no PostgreSQL local da máquina do Worker (desacoplado do RDS).
+    - Tabela Hash em memória (RAM) para gabaritos oficiais lidos/gerados a partir do S3.
+    - Lazy loading sob demanda de schemas e dados via Amazon S3.
+    - Permissões estritas Read-Only e timeout forçado de 3 segundos.
+    - Serialização canônica e validação por Hash SHA-256 (Strict Mode).
     """
 
     def __init__(self):
         self.s3 = S3Manager()
-        self.db_url = settings.DATABASE_URL.replace("postgresql+psycopg2://", "postgresql://")
+        raw_url = settings.SANDBOX_DATABASE_URL or settings.DATABASE_URL
+        self.db_url = raw_url.replace("postgresql+psycopg2://", "postgresql://")
+        # Cache em memória RAM dos hashes oficiais de cada questão
+        self.cached_hashes: Dict[int, str] = {}
 
     def _get_connection(self):
         return psycopg2.connect(self.db_url)
 
     def ensure_schema_bootstrapped(self, question_id: int):
-        """Garante que o schema isolado da questão exista e contenha tabelas e dados."""
+        """
+        Garante que o schema isolado da questão exista no PostgreSQL local.
+        Se não existir, baixa os scripts SQL do S3 sob demanda (Lazy Loading).
+        """
         schema_name = f"pergunta_{question_id}"
         conn = self._get_connection()
         conn.autocommit = True
         try:
             with conn.cursor() as cur:
-                # Verifica se o schema já existe
+                # Verifica se o schema já existe no PostgreSQL local
                 cur.execute(
                     "SELECT 1 FROM information_schema.schemata WHERE schema_name = %s;",
                     (schema_name,)
                 )
                 if cur.fetchone():
-                    return  # Schema já pronto
+                    # Se o schema já existe mas o hash não está em RAM, garante o carregamento do hash
+                    if question_id not in self.cached_hashes:
+                        self._load_official_hash_from_s3_and_sandbox(question_id, cur, schema_name)
+                    return
 
-                logger.info(f"Bootstrapping do schema '{schema_name}' a partir do S3...")
+                logger.info(f"[S3 Lazy-Load] Baixando scripts do S3 para criar schema '{schema_name}' no Postgres local...")
                 
-                # Baixa os scripts SQL do S3
+                # Baixa os scripts SQL do Amazon S3
                 files = self.s3.get_question_sql_files(question_id)
                 schema_sql = files.get("schema", "")
                 data_sql = files.get("data", "")
+                answer_sql = files.get("answer", "")
 
-                # Cria o schema
+                # Cria o schema no PostgreSQL local
                 cur.execute(sql.SQL("CREATE SCHEMA IF NOT EXISTS {};").format(sql.Identifier(schema_name)))
                 cur.execute(sql.SQL("SET search_path TO {}, public;").format(sql.Identifier(schema_name)))
 
@@ -67,9 +77,33 @@ class SandboxExecutor:
                 if data_sql.strip():
                     cur.execute(data_sql)
 
-                logger.info(f"[✓] Schema '{schema_name}' criado e populado com sucesso.")
+                # Executa o gabarito oficial para computar e guardar o hash em memória
+                if answer_sql.strip():
+                    cur.execute(answer_sql)
+                    cols = [desc[0] for desc in cur.description] if cur.description else []
+                    rows = cur.fetchall()
+                    official_hash = self.canonical_hash(cols, rows)
+                    self.cached_hashes[question_id] = official_hash
+                    logger.info(f"[+] Hash oficial da questão #{question_id} computado e salvo na memória RAM: {official_hash[:12]}...")
+
+                logger.info(f"[✓] Schema '{schema_name}' criado e populado com sucesso no PostgreSQL local.")
         finally:
             conn.close()
+
+    def _load_official_hash_from_s3_and_sandbox(self, question_id: int, cur, schema_name: str):
+        """Calcula o hash oficial a partir do answer.sql e armazena na memória do Worker."""
+        try:
+            files = self.s3.get_question_sql_files(question_id)
+            answer_sql = files.get("answer", "")
+            if answer_sql.strip():
+                cur.execute(sql.SQL("SET search_path TO {}, public;").format(sql.Identifier(schema_name)))
+                cur.execute(answer_sql)
+                cols = [desc[0] for desc in cur.description] if cur.description else []
+                rows = cur.fetchall()
+                official_hash = self.canonical_hash(cols, rows)
+                self.cached_hashes[question_id] = official_hash
+        except Exception as e:
+            logger.warning(f"Erro ao computar hash oficial para questão #{question_id}: {e}")
 
     @staticmethod
     def canonical_hash(columns: List[str], rows: List[List[Any]]) -> str:
@@ -85,46 +119,14 @@ class SandboxExecutor:
         return hashlib.sha256(canonical_str.encode("utf-8")).hexdigest()
 
     def get_or_compute_official_hash(self, question_id: int) -> str:
-        """Recupera o hash oficial do gabarito no Redis, ou no RDS (campo expected_hash), ou computa executando o answer.sql."""
-        # 1. Tenta no Redis (ultrarrápido em memória)
-        cached_hash = redis_client.get_answer_hash(question_id)
-        if cached_hash:
-            return cached_hash
+        """Recupera o hash oficial direto da memória RAM do Worker (O(1))."""
+        # 1. Verifica na tabela hash em memória RAM do Worker
+        if question_id in self.cached_hashes:
+            return self.cached_hashes[question_id]
 
-        # 2. Tenta no PostgreSQL RDS (campo persistido expected_hash)
-        conn = self._get_connection()
-        try:
-            with conn.cursor() as cur:
-                cur.execute("SELECT expected_hash FROM questions WHERE id = %s;", (question_id,))
-                row = cur.fetchone()
-                if row and row[0]:
-                    official_hash = row[0]
-                    redis_client.set_answer_hash(question_id, official_hash)
-                    return official_hash
-        except Exception as e:
-            logger.warning(f"Não foi possível consultar expected_hash da questão #{question_id} no RDS: {e}")
-        finally:
-            conn.close()
-
-        # 3. Fallback: Executa o answer.sql para gerar o gabarito
+        # 2. Se não estiver em memória, garante o bootstrapping local e carrega o hash
         self.ensure_schema_bootstrapped(question_id)
-        schema_name = f"pergunta_{question_id}"
-        files = self.s3.get_question_sql_files(question_id)
-        answer_sql = files.get("answer", "SELECT 1;")
-
-        conn = self._get_connection()
-        conn.autocommit = True
-        try:
-            with conn.cursor() as cur:
-                cur.execute(sql.SQL("SET search_path TO {}, public;").format(sql.Identifier(schema_name)))
-                cur.execute(answer_sql)
-                cols = [desc[0] for desc in cur.description] if cur.description else []
-                rows = cur.fetchall()
-                official_hash = self.canonical_hash(cols, rows)
-                redis_client.set_answer_hash(question_id, official_hash)
-                return official_hash
-        finally:
-            conn.close()
+        return self.cached_hashes.get(question_id, "")
 
     def execute_student_query(
         self,

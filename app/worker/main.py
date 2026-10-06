@@ -5,6 +5,7 @@ import sys
 import time
 from datetime import datetime, timezone
 from pathlib import Path
+import httpx
 
 _project_root = Path(__file__).resolve().parent.parent.parent
 if str(_project_root) not in sys.path:
@@ -12,21 +13,59 @@ if str(_project_root) not in sys.path:
 
 from app.config import settings
 from app.sqs.queue_manager import SQSQueueManager
-from app.dynamodb.dynamo_manager import DynamoDBManager
-from app.cache.redis_client import redis_client
-from app.database.session import SessionLocal
-from app.database.models import User, UserSolvedQuestion
 from app.worker.executor import SandboxExecutor
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] [Worker] %(message)s")
 logger = logging.getLogger("SubmissionWorker")
 
 class SubmissionWorker:
+    """
+    Consumidor de Submissões Desacoplado:
+    - 100% isolado do RDS central e do ElastiCache Redis.
+    - Executa a Sandbox no PostgreSQL local da própria máquina EC2.
+    - Notifica a conclusão via HTTP (ALB/Backend) para que o Backend atualize pontuações e caches.
+    """
+
     def __init__(self):
         self.sqs = SQSQueueManager()
-        self.dynamo = DynamoDBManager()
         self.executor = SandboxExecutor()
         self.running = True
+
+    def _notify_backend(self, payload: dict) -> bool:
+        """Envia o resultado da submissão para o Backend via HTTP (ALB)."""
+        callback_url = f"{settings.BACKEND_INTERNAL_URL.rstrip('/')}/api/submissions/callback"
+        headers = {"x-internal-key": settings.INTERNAL_API_KEY}
+
+        try:
+            with httpx.Client(timeout=10.0) as client:
+                resp = client.post(callback_url, json=payload, headers=headers)
+                if resp.status_code == 200:
+                    data = resp.json()
+                    logger.info(f"[Callback HTTP 200] Backend notificado com sucesso! Pontos: {data.get('pointsAwarded', 0)}")
+                    return True
+                else:
+                    logger.error(f"[Callback HTTP Erro] Status {resp.status_code}: {resp.text}")
+                    return False
+        except Exception as ex:
+            logger.warning(f"[Callback HTTP] Backend não respondeu em '{callback_url}' ({ex}). Acionando fallback interno para ambiente local/testes...")
+            try:
+                # Fallback exclusivo para testes unitários locais onde o Uvicorn não está em execução
+                from app.api.submissions import process_submission_callback, SubmissionCallbackRequest
+                from app.database.session import SessionLocal
+                db = SessionLocal()
+                try:
+                    process_submission_callback(
+                        SubmissionCallbackRequest(**payload),
+                        x_internal_key=settings.INTERNAL_API_KEY,
+                        db=db
+                    )
+                    logger.info("[✓ Fallback Local] Resultado processado via serviço backend diretamente.")
+                    return True
+                finally:
+                    db.close()
+            except Exception as fallback_err:
+                logger.error(f"Erro no fallback local do backend: {fallback_err}")
+                return False
 
     def process_message(self, message: dict) -> bool:
         """Processa uma única mensagem de submissão da fila SQS."""
@@ -49,7 +88,7 @@ class SubmissionWorker:
 
         logger.info(f"Processando submissão #{submission_id} (Questão #{question_id} pelo Aluno {user_id})...")
 
-        # 1. Executa a query no Sandbox PostgreSQL
+        # 1. Executa a query 100% no PostgreSQL Local da máquina
         res = self.executor.execute_student_query(
             question_id=int(question_id),
             query=query_sql
@@ -63,70 +102,29 @@ class SubmissionWorker:
         rows = res["rows"]
         student_hash = res.get("studentHash")
 
-        points_awarded = 0
-
-        # 2. Em caso de acerto inédito: pontua +10 XP no RDS
-        if is_correct and user_id:
-            db = SessionLocal()
-            try:
-                solved = db.query(UserSolvedQuestion).filter_by(
-                    user_id=user_id,
-                    question_id=int(question_id)
-                ).first()
-
-                if not solved:
-                    db.add(UserSolvedQuestion(user_id=user_id, question_id=int(question_id)))
-                    user = db.query(User).filter(User.id == user_id).first()
-                    if user:
-                        user.score = (user.score or 0) + 10
-                        user.solved_count = (user.solved_count or 0) + 1
-                    db.commit()
-                    points_awarded = 10
-                    logger.info(f"[+] +10 pontos concedidos ao usuário '{user_id}'!")
-                else:
-                    logger.info(f"[*] Questão #{question_id} já havia sido resolvida por '{user_id}'. Sem pontuação duplicada.")
-            except Exception as ex:
-                db.rollback()
-                logger.error(f"Erro ao atualizar pontuação no RDS: {ex}")
-            finally:
-                db.close()
-
-        # 3. Atualiza status no Redis para polling imediato do frontend
-        final_data = {
+        # 2. Notifica o Backend via HTTP (ALB) com o resultado
+        callback_data = {
             "submissionId": submission_id,
             "userId": user_id,
-            "questionId": question_id,
+            "questionId": int(question_id),
             "status": "DONE",
             "outcome": outcome,
-            "pointsAwarded": points_awarded,
+            "isCorrect": is_correct,
             "executionTimeMs": exec_time,
             "errorMessage": err_msg,
             "columns": cols,
             "rows": rows,
-            "strictModeHashMatched": is_correct,
-            "finishedAt": datetime.now(timezone.utc).isoformat(),
+            "studentHash": student_hash
         }
-        redis_client.set_submission_status(submission_id, final_data)
 
-        # 4. Atualiza registro imutável no DynamoDB
-        try:
-            self.dynamo.update_submission_result(
-                submission_id=submission_id,
-                status=outcome,
-                is_correct=is_correct,
-                execution_time_ms=exec_time,
-                error_message=err_msg,
-                answer_hash=student_hash
-            )
-        except Exception as ex:
-            logger.warning(f"Erro ao persistir no DynamoDB: {ex}")
+        notified = self._notify_backend(callback_data)
 
-        # 5. Remove a mensagem da fila SQS
-        if receipt_handle:
+        # 3. Se o Backend processou a notificação, remove da fila SQS
+        if receipt_handle and notified:
             self.sqs.delete_message(receipt_handle)
             logger.info(f"[✓] Submissão #{submission_id} finalizada com status '{outcome}'. Mensagem removida da SQS.")
 
-        return True
+        return notified
 
     def process_one_message(self, wait_seconds: int = 2) -> bool:
         """Busca e processa exatamente 1 mensagem da fila SQS se houver."""

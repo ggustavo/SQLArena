@@ -12,15 +12,15 @@ A arquitetura adota o padrão de **Single Page Application (SPA)** desacoplada n
 A infraestrutura é dividida em camadas desacopladas utilizando os seguintes serviços AWS e tecnologias:
 
 * **Frontend SPA (React + Vite + Tailwind CSS v4):** Interface do usuário 100% responsiva e full-width. Possui camada dedicada de serviços (`src/services/`) com suporte a Mock desacoplado e chaveamento imediato para a API FastAPI.
-* **Application Load Balancer (ALB):** Ponto de entrada público da aplicação web. Distribui o tráfego HTTP/HTTPS entre as instâncias da API FastAPI via *Round Robin*.
-* **FastAPI (Camada Web / ASG 1):** Backend principal. Responsável por autenticação (JWT), rate limit (5s), validação de regras de negócio, CRUD de questões e categorias, e publicação das submissões dos alunos na fila SQS. **Não executa as consultas dos alunos**.
+* **Application Load Balancer (ALB):** Ponto de entrada público da aplicação web. Distribui o tráfego HTTP/HTTPS entre as instâncias da API FastAPI via *Round Robin* e roteia callbacks internos de conclusão dos Workers.
+* **FastAPI (Camada Web / ASG 1):** Backend principal e **único serviço conectado diretamente ao AWS RDS e ao ElastiCache Redis**. Responsável por autenticação (JWT), rate limit (5s), validação de regras de negócio, CRUD de questões e categorias, publicação na fila SQS, leitura e gravação no DynamoDB, e recebimento do callback HTTP dos Workers (`POST /api/submissions/callback`) para consolidação de pontuação (+10 XP) e atualização de cache. **Não executa as consultas dos alunos**.
 * **Amazon SQS (`sqlarena-submissions-queue`):** Fila de mensageria assíncrona que absorve os picos de tráfego e despacha as submissões dos alunos para os Workers de processamento.
-* **Amazon EC2 (Workers + PostgreSQL em Sandbox / ASG 2):** Instâncias de processamento pesado em background. Cada máquina hospeda um Worker e um SGBD PostgreSQL local, processando uma submissão por vez em schema isolado.
-* **PostgreSQL (AWS RDS):** Banco relacional central que armazena os metadados da aplicação: usuários, questões, categorias pré-definidas, relações N:N de categorias e pontuações consolidadas.
-* **Amazon S3 (`sqlarena-questions-bucket`):** Armazenamento seguro dos **scripts SQL puros** de cada questão (`schema.sql`, `data.sql`, `answer.sql`). **Não há utilização de arquivos CSV ou binários externos**; todos os dados residem como comandos SQL nativos.
-* **Redis / ElastiCache:** Armazenamento em cache de chaves de controle, rate limit global por aluno (5 segundos) e do **Hash canônico SHA-256** do gabarito oficial de cada questão.
+* **Amazon EC2 (Workers + PostgreSQL Local em Sandbox / ASG 2):** Instâncias de processamento em background totalmente desacopladas do banco central. Cada máquina hospeda um Worker Python e um SGBD PostgreSQL local dedicado (sandbox descartável). Executa bootstrapping sob demanda a partir do Amazon S3, armazena hashes de gabaritos em tabela hash na memória RAM do processo, e notifica o término da avaliação via HTTP callback para a API FastAPI (via ALB), sem se conectar ao RDS ou Redis.
+* **PostgreSQL (AWS RDS Central):** Banco relacional central acessado exclusivamente pela Camada Web. Armazena os dados de negócio: usuários, senhas criptografadas, metadados das questões, categorias pré-definidas, relações N:N de categorias e pontuações consolidadas (+10 XP).
+* **Amazon S3 (`sqlarena-questions-bucket`):** Armazenamento seguro dos **scripts SQL puros** de cada questão (`schema.sql`, `data.sql`, `answer.sql`). **Não há utilização de arquivos CSV ou binários externos**; todos os dados residem como comandos SQL nativos. Alimentado pelo backend no cadastro de questões e consumido sob demanda pelos Workers para bootstrapping local.
+* **Redis / ElastiCache:** Armazenamento em cache de chaves de controle, rate limit global por aluno (5 segundos) e status de submissões para polling do frontend. Acessado exclusivamente pela Camada Web.
 * **Amazon DynamoDB:** Log imutável (NoSQL) composto por duas tabelas dedicadas:
-  * `sqlarena-submissions-log`: Histórico completo de submissões, tempos de resposta, status e diagnósticos nativos do compilador PostgreSQL.
+  * `sqlarena-submissions-log`: Histórico completo de submissões, tempos de resposta, status e diagnósticos nativos do compilador PostgreSQL. Alimentado pelo Backend e consultado pelo modal de histórico e recuperação do Monaco Editor.
   * `sqlarena-crud-actions-log`: Auditoria de ações administrativas de criação, edição e exclusão de questões.
 
 ---
@@ -102,30 +102,34 @@ Cada questão reside no S3 sob o prefixo `questions/{question_id}/` contendo est
 
 ## 6. Motor de Execução Local em Sandbox (Workers EC2)
 
-Os Workers da Camada de Processamento mantêm um SGBD PostgreSQL 16:
+Os Workers da Camada de Processamento mantêm um SGBD PostgreSQL 16 instalado **localmente na própria instância EC2** (`localhost:5432`), garantindo isolamento absoluto de hardware em relação ao RDS central:
 
-* **Isolamento de Schemas:** Cada questão possui um schema exclusivo (ex: `pergunta_10`). Antes de executar a consulta do aluno, o Worker aplica `SET search_path TO pergunta_10`.
-* **Segurança e Privilégios Mínimos:** A consulta do aluno é executada sob uma *role* de banco limitada exclusivamente a comandos de leitura (`SELECT`). Qualquer tentativa de DDL (`CREATE`, `DROP`, `ALTER`) ou DML de escrita (`INSERT`, `UPDATE`, `DELETE`) é imediatamente rejeitada pelo SGBD.
+* **PostgreSQL Local Descartável:** Cada nó do ASG possui sua própria base PostgreSQL local (`sandbox_db`). Nenhuma consulta de aluno é executada no banco RDS de produção, garantindo *blast radius* zero contra falhas de CPU ou memória.
+* **Bootstrapping sob Demanda (*Lazy Loading* do S3):** O Worker não precisa carregar previamente todas as questões no boot da máquina. Ao receber uma submissão da fila SQS para a questão `N`:
+  1. O Worker verifica se o schema `pergunta_N` já existe no PostgreSQL local;
+  2. Se não existir, faz o download dos scripts puros (`schema.sql`, `data.sql`, `answer.sql`) do **Amazon S3** sob o prefixo `questions/N/`;
+  3. Cria o schema `pergunta_N`, executa o DDL e popula os dados no banco local;
+  4. Executa a query gabarito `answer.sql` no banco local, calcula o Hash SHA-256 oficial e o armazena na **tabela hash em memória RAM** do Worker.
+* **Isolamento de Schemas:** Cada questão possui um schema exclusivo (ex: `pergunta_10`). Antes de executar a consulta do aluno, o Worker aplica `SET search_path TO pergunta_10, public`.
+* **Segurança e Privilégios Mínimos:** A consulta do aluno é executada com `conn.set_session(readonly=True)`. Qualquer tentativa de DDL (`CREATE`, `DROP`, `ALTER`) ou DML de escrita (`INSERT`, `UPDATE`, `DELETE`) é imediatamente rejeitada pelo SGBD.
 * **Prevenção de Abusos e Timeouts:** O Worker define `SET statement_timeout = '3000'` (3 segundos) na sessão antes de rodar a query, prevenindo loops infinitos, *Cross Joins* cartesianos e exaustão de CPU.
-* **Single-Thread Worker:** O Worker consome uma única mensagem da SQS por vez, executa, limpa a mensagem e passa para a próxima, evitando condições de corrida (*race conditions*).
+* **Single-Thread Worker:** O Worker consome uma única mensagem da SQS por vez, executa, notifica o Backend e limpa a mensagem da fila, evitando condições de corrida (*race conditions*).
+* **Desacoplamento Completo de RDS e Redis:** O Worker não possui credenciais do RDS nem do Redis. Ele comunica o resultado final via chamada HTTP (`POST /api/submissions/callback`) ao Application Load Balancer.
 
 ---
 
-## 7. Comparação Rigorosa e Persistência do Hash Canônico (Strict Mode)
+## 7. Comparação Rigorosa e Tabela Hash em Memória RAM (Strict Mode)
 
-Para garantir máxima performance de rede e economia de tráfego entre instâncias:
+Para garantir máxima performance, latência ultrabaixa e imunidade a falhas de rede:
 
-* **Validação por SHA-256 e Dupla Persistência:**
-  1. Durante a validação da questão, o resultado do `answer.sql` é executado no PostgreSQL e serializado em uma representação canônica textual determinística (nomes de colunas, tipos, ordenação exata de linhas, nulos e valores).
-  2. Essa representação canônica é convertida em um **Hash SHA-256** e persistida:
-     - No banco relacional **RDS PostgreSQL** (coluna `questions.expected_hash`).
-     - No **Redis** (chave `question:{id}:answer_hash`) com recuperação em tempo constante $O(1)$.
-  3. Quando o aluno submete sua consulta, o Worker executa-a no PostgreSQL e gera o hash SHA-256 do resultado produzido.
-  4. Para comparar, o Worker consulta o Redis primeiro; caso haja miss, busca o `expected_hash` no RDS; apenas em último caso executa o gabarito.
+* **Tabela Hash em Memória RAM no Worker ($O(1)$ Puro):**
+  1. Durante o bootstrapping da questão a partir do S3, o resultado do `answer.sql` é executado no PostgreSQL local e serializado em formato canônico determinístico (nomes de colunas em minúsculas, tipos, ordenação exata de linhas, nulos e valores).
+  2. Esse gabarito é convertido em um **Hash SHA-256 canônico** e armazenado diretamente em um dicionário Python na memória RAM do Worker (`self.cached_hashes[question_id]`).
+  3. Quando o aluno submete sua consulta, o Worker executa-a no PostgreSQL local, gera o hash SHA-256 do resultado e compara diretamente com o valor residente em sua memória RAM. Não há dependência de chamadas de rede externas ao Redis para validar gabaritos.
 * **Strict Mode (Regra de 100%):**
   Não existe tolerância para divergência de tipos ou formatação (ex: `FLOAT` diverge de `NUMERIC`; `10.5` diverge de `10.50`). Se os hashes divergirem, a resposta é classificada como `WRONG_ANSWER`.
 * **Diagnósticos Técnicos Educativos:**
-  Caso a consulta falhe por erro de sintaxe ou coluna inexistente, o log nativo de erro do PostgreSQL (ex: `column "x" does not exist (LINE 2)`) é capturado e devolvido ao aluno como ferramenta de diagnóstico.
+  Caso a consulta falhe por erro de sintaxe ou coluna inexistente, o log nativo de erro do PostgreSQL local (ex: `column "x" does not exist (LINE 2)`) é capturado e devolvido ao aluno como ferramenta de diagnóstico.
 
 ---
 
@@ -149,32 +153,50 @@ sequenceDiagram
     participant ALB as Application Load Balancer
     participant API as FastAPI (ASG 1)
     participant Redis as Redis / Cache
+    participant S3 as Amazon S3
     participant SQS as Fila Amazon SQS
-    participant Worker as Worker EC2 + PostgreSQL (ASG 2)
-    participant RDS as PostgreSQL (RDS)
+    participant Worker as Worker EC2 (ASG 2)
+    participant LocalPG as PostgreSQL Local (Sandbox EC2)
+    participant RDS as PostgreSQL (RDS Central)
     participant Dynamo as AWS DynamoDB
 
     Aluno->>ALB: POST /submissions (question_id, sql_query)
     ALB->>API: Roteia requisição HTTP
     API->>Redis: Valida Rate Limit (5s por aluno)
+    API->>Dynamo: Grava registro inicial (PROCESSING)
+    API->>Redis: Salva status inicial no cache
     API->>SQS: Publica payload da submissão na fila
     API-->>Aluno: HTTP 202 Accepted (submission_id, poll_interval)
     
     Worker->>SQS: Consome mensagem pendente
-    Worker->>Worker: Aplica timeout e search_path do schema
-    Worker->>Worker: Executa query em modo Read-Only
-    Worker->>Redis: Compara Hash SHA-256 gerado vs Gabarito
+    
+    opt Schema não existe no PostgreSQL Local da EC2
+        Worker->>S3: Baixa schema.sql, data.sql e answer.sql
+        Worker->>LocalPG: Cria schema pergunta_{id} e popula dados
+        Worker->>LocalPG: Executa answer.sql e guarda hash em RAM
+    end
+
+    Worker->>LocalPG: Aplica statement_timeout (3s) e search_path
+    Worker->>LocalPG: Executa query do aluno em modo Read-Only
+    Worker->>Worker: Compara Hash do aluno vs Hash em Memória RAM
+    
+    Worker->>ALB: POST /api/submissions/callback (resultado da execução)
+    ALB->>API: Roteia callback interno
     
     alt Hash Correto (Inédito)
-        Worker->>RDS: Concede +10 XP e marca questão como resolvida
+        API->>RDS: Concede +10 XP e registra em user_solved_questions
     end
-    
-    Worker->>Dynamo: Grava log imutável da submissão
+    API->>Redis: Atualiza status final da submissão (DONE)
+    API->>Dynamo: Atualiza resultado final no DynamoDB
+    API-->>Worker: HTTP 200 OK (concluído)
+
     Worker->>SQS: Remove mensagem da fila
     
     loop Polling Assíncrono
-        Aluno->>API: GET /submissions/{id}/status
-        API-->>Aluno: Retorna status (PROCESSING -> DONE com resultado/erros)
+        Aluno->>ALB: GET /submissions/{id}/status
+        ALB->>API: Roteia consulta
+        API->>Redis: Busca status em cache (fallback DynamoDB)
+        API-->>Aluno: Retorna resultado (DONE / erros / XP)
     end
 ```
 

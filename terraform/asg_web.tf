@@ -46,6 +46,7 @@ cat <<EOT > app/.env
 ENVIRONMENT=production
 APP_PORT=${var.app_port}
 SECRET_KEY=sqlarena-production-super-secret-key-32chars-min
+INTERNAL_API_KEY=sqlarena-internal-service-secret-key-32chars
 ALGORITHM=HS256
 ACCESS_TOKEN_EXPIRE_MINUTES=10080
 

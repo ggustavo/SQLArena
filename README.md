@@ -6,6 +6,51 @@ Plataforma distribuída para prática e avaliação de consultas SQL em ambiente
 
 ## 🏛️ Arquitetura do Sistema
 
+```mermaid
+flowchart TD
+    subgraph Client["Cliente"]
+        User["Usuário / Navegador"]
+    end
+
+    subgraph Entry["Entrada"]
+        ALB["Application Load Balancer (Porta 80)"]
+    end
+
+    subgraph WebASG["Camada Web (ASG - EC2)"]
+        FastAPI["FastAPI + React SPA (Porta 8000)"]
+    end
+
+    subgraph Messaging["Mensageria"]
+        SQS["Amazon SQS (Fila de Submissões)"]
+    end
+
+    subgraph WorkerASG["Camada de Processamento (ASG - EC2)"]
+        Worker["Worker Python"]
+        LocalPG["PostgreSQL Local (Sandbox EC2)"]
+    end
+
+    subgraph Storage["Armazenamento e Dados"]
+        S3["Amazon S3 (Scripts SQL DDL e DML)"]
+        Redis["Amazon ElastiCache Redis (Rate Limit 5s e Cache)"]
+        RDS["Amazon RDS PostgreSQL 16 (Auth, Usuários e Pontos)"]
+        Dynamo["Amazon DynamoDB (Auditoria e Histórico)"]
+    end
+
+    User -->|"HTTP Porta 80"| ALB
+    ALB -->|"Proxy Porta 8000"| FastAPI
+
+    FastAPI -->|"1. Upload Scripts SQL"| S3
+    FastAPI -->|"2. Valida Rate Limit e Cache"| Redis
+    FastAPI -->|"3. Auth, Usuários e CRUD"| RDS
+    FastAPI -->|"4. Despacha Submissão"| SQS
+    FastAPI -->|"5. Lê e Grava Histórico / Auditoria"| Dynamo
+
+    SQS -->|"6. Consome Mensagem"| Worker
+    Worker -.->|"7. Bootstrapping de Schemas (Lazy Load)"| S3
+    Worker -->|"8. Executa Sandbox no Postgres Local"| LocalPG
+    Worker -->|"9. Callback HTTP de Conclusão"| ALB
+```
+
 ```text
                                   ┌─────────────────────────────┐
                                   │      Usuário / Navegador    │
@@ -14,38 +59,66 @@ Plataforma distribuída para prática e avaliação de consultas SQL em ambiente
                                                  ▼
                                   ┌─────────────────────────────┐
                                   │  Application Load Balancer  │
-                                  └──────────────┬──────────────┘
-                                                 │ Porta 8000
-                                                 ▼
-                     ┌───────────────────────────────────────────────────────┐
-                     │            Camada Web (ASG - Instâncias EC2)          │
-                     │  ┌─────────────────────────────────────────────────┐  │
-                     │  │   FastAPI (Uvicorn)                             │  │
-                     │  │   • SPA React (frontend/dist) servida no root   │  │
-                     │  │   • API REST (/api/auth, /api/questions, etc.) │  │
-                     │  └────────┬───────────────────────┬────────────────┘  │
-                     └───────────┼───────────────────────┼───────────────────┘
-                                 │                       │ Despacha Submissão
-                Consulta / Login │                       ▼
-                                 │             ┌───────────────────┐
-                                 │             │     Amazon SQS    │
-                                 │             │ (Fila Principal)  │
-                                 │             └─────────┬─────────┘
-                                 │                       │ Consome
-                                 ▼                       ▼
-┌──────────────────────────────────────────┐   ┌──────────────────────────────────────────┐
-│             Bancos de Dados              │   │         Camada de Workers (ASG)          │
-│ • Amazon RDS (PostgreSQL 16):            │   │  • Worker Python (app/worker/main.py)    │
-│   - Metadados, Usuários, Questões        │◄──┤  • Execução em Sandbox (Schemas isolados)│
-│ • Amazon ElastiCache (Redis):            │   │  • Comparação de Hash SHA-256            │
-│   - Rate Limit e Cache de Hashes         │   └────────────────────┬─────────────────────┘
-│ • Amazon S3:                             │                        │ Registra Execuções
-│   - Scripts SQL de preparação e limpeza  │                        ▼
-│ • Amazon DynamoDB:                       │           ┌────────────────────────┐
-│   - Logs imutáveis de submissões e audit │           │     Amazon DynamoDB    │
-└──────────────────────────────────────────┘           │ (Histórico e Auditoria)│
-                                                       └────────────────────────┘
+                                  └───────┬───────────────▲─────┘
+                                          │ Porta 8000    │ Callback HTTP:
+                                          ▼               │ "Submissão Concluída"
+                     ┌────────────────────────────────────┴───────────────────┐
+                     │            Camada Web (ASG - Instâncias EC2)           │
+                     │  ┌──────────────────────────────────────────────────┐  │
+                     │  │   FastAPI (Uvicorn)                              │  │
+                     │  │   • SPA React (frontend/dist) servida no root    │  │
+                     │  │   • API REST (/api/auth, /api/questions, etc.)  │  │
+                     │  │   • ÚNICO cliente conectado ao RDS e Redis       │  │
+                     │  └───┬─────────────┬─────────────┬───────────┬───┬──┘  │
+                     └──────┼─────────────┼─────────────┼───────────┼───┼─────┘
+                            │             │             │           │   │
+        Upload Scripts SQL  │ Rate Limit  │ Consulta    │ Despacha  │   │ Lê Histórico
+     (schema, data, answer) │ & Cache     │ & Metadados │ Submissão │   │ de Submissões
+             ┌──────────────┘             │             │           │   │ e Auditoria
+             │             ┌──────────────┘             │           │   │
+             │             │                            │           │   │
+             ▼             ▼                            ▼           │   │
+  ┌────────────────────┐ ┌───────────────────┐ ┌─────────────────┐  │   │
+  │     Amazon S3      │ │Amazon ElastiCache │ │   Amazon SQS    │  │   │
+  │  (Object Storage)  │ │      (Redis)      │ │(Fila Principal) │  │   │
+  │ • Scripts SQL de   │ │• Rate Limit (5s)  │ └────────┬────────┘  │   │
+  │   cada questão     │ │• Cache de Hashes  │          │           │   │
+  └──────────▲─────────┘ │• Status Submissão │          │ Consome   │   │
+             │           └───────────────────┘          │ Submissão │   │
+             │                                          ▼           │   │
+             │ Download Scripts                 ┌───────────────────┴───┴───────┐
+             │ (Bootstrapping sob demanda)      │      Camada de Workers (ASG)  │
+             │                                  │  ┌─────────────────────────┐  │
+             └──────────────────────────────────┼──┤ PostgreSQL Local Sandbox│  │
+                                                │  │ (localhost:5432)        │  │
+                                                │  └────────────▲────────────┘  │
+                                                │               │               │
+                                                │  ┌────────────┴────────────┐  │
+                                                │  │ Worker Python           │──┘
+                                                │  │ • Tabela Hash em RAM    │
+                                                │  │ • Notifica via Callback │
+                                                │  └────────────┬────────────┘
+                                                └───────────────┼───────────────┐
+                                                                │               │
+                                                                ▼               ▼
+                                                       ┌─────────────────┐ ┌────────────────────────┐
+                                                       │   Amazon RDS    │ │    Amazon DynamoDB     │
+                                                       │ (PostgreSQL 16) │ │ • Logs de Auditoria    │
+                                                       │ • Usuários e XP │ │ • Histórico Submissões │
+                                                       │ • Dados de App  │ │ • Última tentativa     │
+                                                       └─────────────────┘ └────────────────────────┘
 ```
+
+### Componentes e Papéis na Arquitetura
+
+* ⚖️ **Application Load Balancer (ALB):** Ponto de entrada público na porta 80, distribuindo tráfego para a Camada Web e roteando callbacks internos dos Workers.
+* 🌐 **Camada Web (FastAPI + React SPA no ASG 1):** Gerencia autenticação JWT, CRUD de questões, rate limit e despacho assíncrono de submissões. **É o único componente que se conecta ao Amazon RDS e ao ElastiCache Redis**. Faz upload dos scripts SQL no **Amazon S3**, publica mensagens no **Amazon SQS**, processa callbacks de conclusão dos Workers (`POST /api/submissions/callback`) para creditar +10 XP no RDS, e **lê/escreve no Amazon DynamoDB** o histórico de submissões e logs de auditoria.
+* 🪣 **Amazon S3 (Armazenamento de Objetos):** Bucket dedicado (`sqlarena-questions-bucket`) onde residem exclusivamente os scripts SQL puros de cada questão (`schema.sql`, `data.sql` e `answer.sql`) sob o prefixo `questions/{id}/`.
+* 📬 **Amazon SQS:** Fila de mensageria assíncrona (`sqlarena-submissions-queue` + DLQ) que desacopla o envio da execução, absorvendo picos de concorrência.
+* ⚡ **Camada de Workers (ASG 2):** Processamento em background **100% desacoplado do RDS e do Redis**. Cada nó EC2 mantém seu próprio **PostgreSQL Local em Sandbox** (`localhost:5432`). Consome a fila SQS, faz o download sob demanda dos scripts do **Amazon S3** (*lazy loading*), armazena hashes de gabaritos em memória RAM ($O(1)$), executa a query do aluno em sandbox com isolamento estrito e notifica o término da avaliação via HTTP callback para o **ALB / FastAPI**.
+* 🗄️ **Amazon RDS (PostgreSQL 16):** Banco relacional gerenciado central acessado exclusivamente pela Camada Web. Armazena usuários, progresso consolidado (+10 XP) e metadados das questões e categorias.
+* 🏎️ **Amazon ElastiCache (Redis):** Cache em memória de baixa latência acessado exclusivamente pela Camada Web para rate limiting de 5s por aluno e recuperação imediata em $O(1)$ de gabaritos e status de polling.
+* 📄 **Amazon DynamoDB:** Banco NoSQL serverless para histórico imutável de todas as submissões executadas e log de auditoria administrativa. **Consultado pelo Backend** para alimentar as telas de histórico, progresso e auditoria.
 
 ---
 
@@ -212,6 +285,18 @@ npm run dev
 #### 2. "O Terraform não deveria ligar as máquinas EC2 e o Worker sozinho?"
 * **Na AWS Real:** SIM. O Terraform provisiona instâncias EC2 gerenciadas pela Amazon e executa o script `user_data`, que configura e sobe o sistema sozinho.
 * **No Computador Local:** NÃO. O Ministack é apenas um emulador de API e não cria máquinas virtuais no Windows. No seu computador, a sua própria máquina física faz o papel das instâncias EC2.
+
+#### 3. "Como a Camada de Workers está isolada do RDS e do Redis?"
+* **PostgreSQL Local em cada EC2 (Sandbox Descartável):**
+  - Cada máquina de Worker hospeda seu próprio PostgreSQL local (`localhost:5432`).
+  - As consultas dos alunos rodam 100% isoladas na máquina do Worker, com *blast radius* zero: se uma query for lenta ou pesada, ela afeta apenas aquela EC2 descartável e nunca toca no RDS central de produção.
+* **Tabela Hash em Memória RAM e Lazy-Loading do S3:**
+  - O Worker não precisa pré-carregar todos os exercícios: ele baixa do **Amazon S3** sob demanda apenas os exercícios que chegarem em sua fila.
+  - Os hashes oficiais dos gabaritos ficam salvos na memória RAM do Worker em uma tabela hash ($O(1)$), eliminando qualquer dependência de rede com o ElastiCache Redis para validação de respostas.
+* **Comunicação Desacoplada via Callback HTTP:**
+  - O Worker não possui credenciais do banco RDS nem do Redis.
+  - Ao finalizar a avaliação, o Worker faz uma chamada HTTP (`POST /api/submissions/callback`) para o Application Load Balancer.
+  - A Camada Web (FastAPI) — e **apenas ela** — acessa o RDS para creditar os +10 XP ao aluno e atualiza o Redis e o DynamoDB.
 
 ---
 
