@@ -205,4 +205,35 @@ formato padrão da web pra isso. Ver seção 6.
 | Metadados de questão (placeholder RDS) | `app/backend/store.py` |
 | Rotas de questão | `app/backend/routers/questions.py` |
 | Rotas de auditoria | `app/backend/routers/audit.py` |
-| Dependências Python (fastapi, uvicorn, python-multipart) | `app/requirements.txt` |
+| Dependências Python (fastapi, uvicorn, python-multipart, sqlalchemy, etc.) | `app/requirements.txt` |
+
+---
+
+## 10. Integração Concluída: RDS PostgreSQL, Autenticação JWT e Worker Sandbox
+
+Os itens marcados como `TODO(RDS)` e `TODO(AUTH)` foram **100% implementados e integrados**:
+
+1. **RDS PostgreSQL Relacional (`app/database/`):**
+   - Modelos SQLAlchemy 2.0 reais (`User`, `Category`, `Question`, `question_categories`, `UserSolvedQuestion`).
+   - Seed automático populando 12 categorias em ordem alfabética e 21 questões reais com upload para o S3.
+   - IDs agora são gerados e persistidos no banco de dados relacional.
+
+2. **Autenticação JWT Real (`app/auth/` e `app/api/auth.py`):**
+   - Senhas criptografadas com `bcrypt`.
+   - Emissão de tokens JWT com validação de claims (`sub`, `role`, `email`, `name`).
+   - Dependência `get_current_user` e `require_instructor` protegendo endpoints administrativos.
+
+3. **Submissões Assíncronas e Worker Sandbox (`app/worker/` e `app/api/submissions.py`):**
+   - Rate limit atômico de 5 segundos via Redis por aluno (`ratelimit:{user_id}`).
+   - Publicação na fila Amazon SQS `sqlarena-submissions-queue`.
+   - Sandbox de execução em PostgreSQL 16 com schema isolado por questão (`pergunta_{id}`), modo Read-Only estrito e timeout de 3000ms.
+   - Comparação determinística O(1) com Hash SHA-256 e pontuação de +10 XP no RDS para resoluções inéditas.
+   - Registro imutável de todas as tentativas no DynamoDB (`sqlarena-submissions-log`).
+
+4. **Compatibilidade dos Pontos de Entrada:**
+   A aplicação pode ser iniciada indistintamente com qualquer um dos comandos:
+   ```bash
+   uvicorn app.main:app --reload --port 8000
+   # ou
+   uvicorn app.backend.main:app --reload --port 8000
+   ```

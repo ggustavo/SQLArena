@@ -21,12 +21,18 @@ from dotenv import load_dotenv
 _env_path = Path(__file__).resolve().parent.parent / ".env"
 load_dotenv(dotenv_path=_env_path)
 
-# Adiciona o diretorio app ao sys.path para importar os modulos internos
+# Adiciona os diretorios raiz e app ao sys.path para importar os modulos internos
+_project_root = Path(__file__).resolve().parent.parent.parent
+if str(_project_root) not in sys.path:
+    sys.path.insert(0, str(_project_root))
 app_dir = str(Path(__file__).resolve().parent.parent)
 if app_dir not in sys.path:
-    sys.path.append(app_dir)
+    sys.path.insert(0, app_dir)
 
-from sqs.queue_manager import SQSQueueManager
+try:
+    from app.sqs.queue_manager import SQSQueueManager
+except ImportError:
+    from sqs.queue_manager import SQSQueueManager
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] [Worker] %(message)s")
 logger = logging.getLogger("SQLArenaWorker")
