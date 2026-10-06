@@ -20,9 +20,21 @@ O projeto foi desenhado para funcionar de forma idêntica em dois cenários:
 
 ---
 
+---
+
 # 💻 TRILHA 1: AMBIENTE LOCAL (Desenvolvimento no seu PC)
 
-Siga este passo a passo para rodar tudo na sua máquina com o emulador local.
+> [!IMPORTANT]
+> ### ⚠️ CONCEITO CRUCIAL: Por que preciso rodar o Backend e o Worker em terminais separados no meu PC?
+> * **Na AWS Real (Nuvem):** O Terraform cria servidores virtuais **EC2 reais**. Quando as máquinas ligam, a AWS executa automaticamente o script `user_data` configurado no Terraform, que sobe o Backend e o Worker sozinhos sem você precisar tocar em nada.
+> * **No seu PC (Ministack Local):** O Ministack é apenas um emulador de APIs. Ele confirma para o Terraform que os recursos existem, mas **ele NÃO cria máquinas virtuais reais** no seu Windows.
+> * **A sua máquina física faz o papel das EC2s:** 
+>   * O **Terminal 1** (`uvicorn`) faz o papel da EC2 da Camada Web (API).
+>   * O **Terminal 2** (`python app/worker/main.py`) faz o papel da EC2 dos Workers.
+> * **O que acontece se o Worker não estiver rodando?**
+>   Quando você clica em "Executar" no frontend, a FastAPI envia sua consulta para a fila **Amazon SQS**. Se o **Worker não estiver rodando no Terminal 2**, **ninguém consome a fila**, e o frontend fica eternamente em *"Processando..."* ou com status em branco!
+
+---
 
 ### Passo 1: Subir a Infraestrutura Base (Docker)
 > ⚠️ Abra o **Docker Desktop** antes de executar.
@@ -117,6 +129,36 @@ npm run dev
 | :--- | :--- | :--- | :--- |
 | **Aluno** | `aluno@sqlarena.com` | `123456` | Dashboard, Arena de Código Monaco (`Ctrl+Enter`), Histórico em Modal, Pontuação de XP |
 | **Instrutor** | `instrutor@sqlarena.com` | `123456` | Painel de Criação de Questões, validação de `ORDER BY`, categorias N:N, Logs de Auditoria |
+
+---
+
+### 🖥️ Resumo dos 3 Terminais Necessários no seu Computador
+
+Para testar a plataforma localmente de ponta a ponta, você precisa manter **3 terminais abertos**:
+
+| Terminal | O que roda | Comando | O que faz no sistema |
+| :---: | :--- | :--- | :--- |
+| **Terminal 1** | **Backend API** | `uvicorn app.main:app --reload --host 0.0.0.0 --port 8000` | Recebe requisições HTTP do frontend e despacha submissões para o SQS |
+| **Terminal 2** | **Worker SQS** | `python app/worker/main.py` | **OBRIGATÓRIO:** Consome a fila SQS, roda o SQL no PostgreSQL e avalia a resposta |
+| **Terminal 3** | **Frontend SPA** | `cd frontend; npm run dev` | Interface web em React no navegador (`http://localhost:5173`) |
+
+---
+
+### ❓ Perguntas Frequentes & Diagnóstico (Troubleshooting)
+
+#### 1. "Cliquei em 'Executar' na Arena e a tela ficou em 'Processando...' sem sair do lugar ou a fila ficou em branco?"
+* **Causa:** O **Worker (Terminal 2)** não está ligado! A consulta foi enviada pelo frontend e colocada na fila SQS, mas ninguém está consumindo a fila.
+* **Solução:** Abra o **Terminal 2** com o `.venv` ativo e execute:
+  ```powershell
+  & app/.venv/Scripts/Activate.ps1
+  $env:PYTHONPATH="."
+  python app/worker/main.py
+  ```
+  Assim que o Worker ligar, ele pegará as consultas pendentes na fila imediatamente, executará no PostgreSQL Sandbox e a tela do navegador atualizará em menos de 1 segundo!
+
+#### 2. "O Terraform não deveria ligar as máquinas EC2 e o Worker sozinho?"
+* **Na AWS Real:** SIM. O Terraform cria instâncias EC2 gerenciadas pela Amazon e executa o script `user_data` que sobe o worker dentro da máquina virtual.
+* **No Computador Local:** NÃO. O Ministack é apenas um emulador de API e não tem poder de criar máquinas virtuais no Windows. No seu computador, a sua própria máquina física faz o papel das EC2s, por isso precisamos rodar o Backend e o Worker nos terminais.
 
 ---
 
