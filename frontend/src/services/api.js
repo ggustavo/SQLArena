@@ -2,9 +2,9 @@ import axios from 'axios';
 
 /**
  * Flag global para alternar entre dados Mockados e Backend Real.
- * Quando o backend FastAPI estiver rodando, basta mudar para false!
+ * Definido como false para integração ponta a ponta com a API FastAPI.
  */
-export const USE_MOCK = true;
+export const USE_MOCK = false;
 
 /**
  * Instância configurada do Axios para chamadas HTTP ao FastAPI.

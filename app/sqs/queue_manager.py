@@ -65,18 +65,43 @@ class SQSQueueManager:
         self._dlq_url: Optional[str] = None
 
     # ----------------------------------------------------------------------
-    # URLs das Filas
+    # URLs e Criação Automática das Filas
     # ----------------------------------------------------------------------
 
+    def ensure_queues_exist(self) -> Dict[str, str]:
+        """Garante que a fila principal e a DLQ existam (criando-as automaticamente se necessário)."""
+        urls = {}
+        try:
+            dlq_res = self.sqs.create_queue(QueueName=self.dlq_name)
+            self._dlq_url = dlq_res.get("QueueUrl")
+            urls["dlq"] = self._dlq_url
+        except Exception as e:
+            logger.warning(f"Não foi possível criar DLQ '{self.dlq_name}': {e}")
+
+        try:
+            q_res = self.sqs.create_queue(QueueName=self.queue_name)
+            self._queue_url = q_res.get("QueueUrl")
+            urls["queue"] = self._queue_url
+            logger.info(f"Fila '{self.queue_name}' pronta: {self._queue_url}")
+        except Exception as e:
+            logger.error(f"Erro ao criar fila '{self.queue_name}': {e}")
+            raise
+        return urls
+
     def get_queue_url(self) -> str:
-        """Obtém a URL da fila principal via API do SQS (com cache em memória)."""
+        """Obtém a URL da fila principal via API do SQS (com cache em memória e criação automática se não existir)."""
         if not self._queue_url:
             try:
                 response = self.sqs.get_queue_url(QueueName=self.queue_name)
                 self._queue_url = response["QueueUrl"]
             except ClientError as e:
-                logger.error(f"Erro ao obter URL da fila '{self.queue_name}': {e}")
-                raise
+                err_code = e.response.get("Error", {}).get("Code", "")
+                if "NonExistentQueue" in err_code or "AWS.SimpleQueueService.NonExistentQueue" in str(e):
+                    logger.info(f"Fila '{self.queue_name}' não existe. Criando automaticamente...")
+                    self.ensure_queues_exist()
+                else:
+                    logger.error(f"Erro ao obter URL da fila '{self.queue_name}': {e}")
+                    raise
         return self._queue_url
 
     def get_dlq_url(self) -> Optional[str]:
@@ -86,9 +111,13 @@ class SQSQueueManager:
                 response = self.sqs.get_queue_url(QueueName=self.dlq_name)
                 self._dlq_url = response["QueueUrl"]
             except ClientError:
-                # DLQ pode não existir ou não estar configurada
-                logger.warning(f"DLQ '{self.dlq_name}' não foi encontrada.")
-                return None
+                # DLQ pode não existir, tenta criar
+                try:
+                    dlq_res = self.sqs.create_queue(QueueName=self.dlq_name)
+                    self._dlq_url = dlq_res.get("QueueUrl")
+                except Exception:
+                    logger.warning(f"DLQ '{self.dlq_name}' não foi encontrada.")
+                    return None
         return self._dlq_url
 
     # ----------------------------------------------------------------------

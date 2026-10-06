@@ -64,7 +64,7 @@ export default function ArenaPage({ question, onBack, user, onAddPoints, initial
             if (statusData.outcome === 'SUCCESS' && onAddPoints) {
               onAddPoints(10);
             }
-          } else if (pollAttempts > 10) {
+          } else if (pollAttempts > 35) {
             clearInterval(pollTimer);
             setIsRunning(false);
             setErrorMessage('Tempo limite excedido na execução da consulta.');

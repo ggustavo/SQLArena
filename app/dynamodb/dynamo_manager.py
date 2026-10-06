@@ -81,6 +81,12 @@ class DynamoDBManager:
     # Gestão da Tabela
     # ----------------------------------------------------------------------
 
+    def ensure_tables_exist(self) -> bool:
+        """Garante que tanto a tabela de submissões quanto a de logs de CRUD existam."""
+        self.ensure_table_exists()
+        self.ensure_crud_table_exists()
+        return True
+
     def ensure_table_exists(self) -> bool:
         """
         Verifica se a tabela existe; caso contrário, cria com chaves e GSI do aluno.
@@ -267,9 +273,44 @@ class DynamoDBManager:
             logger.error(f"Erro ao atualizar submissão #{submission_id}: {e}")
             raise
 
+    def record_submission(self, sub_data: dict) -> Dict[str, Any]:
+        """Alias para registrar submissão inicial a partir de um dicionário."""
+        return self.save_execution_log(
+            submission_id=sub_data.get("submissionId") or sub_data.get("submission_id"),
+            student_id=sub_data.get("studentId") or sub_data.get("userId") or sub_data.get("user_id"),
+            question_id=sub_data.get("questionId") or sub_data.get("question_id"),
+            query=sub_data.get("query", ""),
+            status=sub_data.get("status", "PROCESSING"),
+            is_correct=sub_data.get("strictModeHashMatched", False),
+            created_at=sub_data.get("createdAt") or sub_data.get("created_at")
+        )
+
+    def update_submission_result(
+        self,
+        submission_id: Union[str, int],
+        status: str,
+        is_correct: Optional[bool] = None,
+        execution_time_ms: Optional[float] = None,
+        error_message: Optional[str] = None,
+        answer_hash: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Alias para update_submission_status."""
+        return self.update_submission_status(
+            submission_id=submission_id,
+            status=status,
+            is_correct=is_correct,
+            execution_time_ms=execution_time_ms,
+            pg_error=error_message,
+            hash_result=answer_hash
+        )
+
     # ----------------------------------------------------------------------
     # Consultas e Leitura (Polling do Frontend e Histórico)
     # ----------------------------------------------------------------------
+
+    def get_submission(self, submission_id: Union[str, int]) -> Optional[Dict[str, Any]]:
+        """Alias para get_submission_log."""
+        return self.get_submission_log(submission_id)
 
     def get_submission_log(self, submission_id: Union[str, int]) -> Optional[Dict[str, Any]]:
         """
@@ -281,6 +322,14 @@ class DynamoDBManager:
         except ClientError as e:
             logger.error(f"Erro ao consultar submissão #{submission_id}: {e}")
             raise
+
+    def get_student_submissions(
+        self,
+        student_id: Union[str, int],
+        limit: int = 50,
+    ) -> List[Dict[str, Any]]:
+        """Alias para list_student_submissions."""
+        return self.list_student_submissions(student_id=student_id, limit=limit)
 
     def list_student_submissions(
         self,
@@ -322,22 +371,21 @@ class DynamoDBManager:
     def log_crud_action(
         self,
         action_type: str,
-        entity: str,
         entity_id: Union[str, int],
         user_id: Union[str, int],
+        entity: str = "exercise",
         changed_data: Optional[Dict[str, Any]] = None,
+        details: Optional[Any] = None,
         action_id: Optional[str] = None,
         created_at: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Registra de forma imutável uma ação de CRUD sobre qualquer entidade da aplicação
         (ex: exercício, usuário). Atende ao Requisito 5 do enunciado.
-
-        Exemplos de action_type: CREATE_EXERCISE, UPDATE_EXERCISE, DELETE_EXERCISE,
-        SUBMIT_ANSWER, CREATE_USER, etc. — o valor fica a critério de quem chama.
         """
         action_id = action_id or f"log_{uuid.uuid4().hex[:16]}"
         now_iso = created_at or datetime.now(timezone.utc).isoformat()
+        final_details = changed_data if changed_data is not None else details
 
         item: Dict[str, Any] = {
             "action_id": action_id,
@@ -348,8 +396,8 @@ class DynamoDBManager:
             "created_at": now_iso,
         }
 
-        if changed_data:
-            item["changed_data"] = _sanitize_for_dynamodb(changed_data)
+        if final_details:
+            item["changed_data"] = _sanitize_for_dynamodb(final_details)
 
         try:
             self.crud_table.put_item(Item=item)

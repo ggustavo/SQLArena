@@ -275,8 +275,30 @@ export async function submitQuery({ questionId, questionTitle = 'Questão SQL', 
   const response = await api.post('/submissions', {
     question_id: questionId,
     sql_query: sqlQuery,
+    questionTitle,
+    difficulty,
   });
-  return response.data;
+
+  const subData = response.data;
+  try {
+    const history = getStoredHistory();
+    history.unshift({
+      submissionId: subData.submissionId,
+      questionId,
+      questionTitle,
+      difficulty,
+      userId,
+      query: sqlQuery,
+      status: 'PROCESSING',
+      outcome: null,
+      createdAt: new Date().toISOString(),
+    });
+    saveStoredHistory(history);
+  } catch (err) {
+    console.warn('Erro ao salvar histórico local:', err);
+  }
+
+  return subData;
 }
 
 /**
@@ -348,7 +370,25 @@ export async function checkSubmissionStatus(submissionId) {
 
   // --- Backend Real ---
   const response = await api.get(`/submissions/${submissionId}/status`);
-  return response.data;
+  const statusData = response.data;
+
+  if (statusData && statusData.status === 'DONE') {
+    try {
+      const history = getStoredHistory();
+      const idx = history.findIndex((s) => s.submissionId === submissionId);
+      if (idx !== -1) {
+        history[idx] = {
+          ...history[idx],
+          ...statusData,
+        };
+        saveStoredHistory(history);
+      }
+    } catch (err) {
+      console.warn('Erro ao atualizar histórico local:', err);
+    }
+  }
+
+  return statusData;
 }
 
 /**

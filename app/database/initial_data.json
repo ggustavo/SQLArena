@@ -1,0 +1,1486 @@
+{
+  "questions": [
+    {
+      "id": 1,
+      "title": "Top 5 Clientes com Maior Faturamento",
+      "difficulty": "Médio",
+      "categories": [
+        "Agrupamento",
+        "Filtragem",
+        "JOINs"
+      ],
+      "category": "Agrupamento",
+      "status": "SOLVED",
+      "publishedStatus": "PUBLISHED",
+      "description": "A diretoria comercial precisa identificar os 5 clientes que geraram o maior volume financeiro em compras concluídas.\n\nEscreva uma consulta SQL que retorne o **nome do cliente** e o **faturamento total** acumulado considerando apenas os pedidos com status `'FINALIZADO'`.\n\n**Regras:**\n- Ordene o resultado do maior faturamento para o menor.\n- Em caso de empate no valor, ordene alfabeticamente pelo nome do cliente.\n- Limite a saída aos 5 primeiros registros.",
+      "schemaSql": "CREATE TABLE clientes (\n    id SERIAL PRIMARY KEY,\n    nome VARCHAR(100) NOT NULL,\n    email VARCHAR(120) UNIQUE NOT NULL,\n    cidade VARCHAR(50)\n);\n\nCREATE TABLE pedidos (\n    id SERIAL PRIMARY KEY,\n    cliente_id INT NOT NULL REFERENCES clientes(id),\n    valor_total NUMERIC(10,2) NOT NULL,\n    status VARCHAR(20) DEFAULT 'PENDENTE',\n    data_pedido TIMESTAMP DEFAULT NOW()\n);\n\nCREATE TABLE itens_pedido (\n    id SERIAL PRIMARY KEY,\n    pedido_id INT NOT NULL REFERENCES pedidos(id),\n    produto_nome VARCHAR(80) NOT NULL,\n    quantidade INT NOT NULL,\n    preco_unitario NUMERIC(10,2) NOT NULL\n);",
+      "sampleTables": [
+        {
+          "name": "clientes",
+          "columns": [
+            "id",
+            "nome",
+            "email",
+            "cidade"
+          ],
+          "rows": [
+            {
+              "id": 1,
+              "nome": "Ana Beatriz Rocha",
+              "email": "ana.rocha@email.com",
+              "cidade": "São Paulo"
+            },
+            {
+              "id": 2,
+              "nome": "Carlos Eduardo Mendes",
+              "email": "cadu@email.com",
+              "cidade": "Curitiba"
+            },
+            {
+              "id": 3,
+              "nome": "Mariana Souza Lima",
+              "email": "mariana.lima@email.com",
+              "cidade": "Belo Horizonte"
+            },
+            {
+              "id": 4,
+              "nome": "Felipe Nogueira",
+              "email": "fnogueira@email.com",
+              "cidade": "Rio de Janeiro"
+            },
+            {
+              "id": 5,
+              "nome": "Juliana Paes Castro",
+              "email": "jcastro@email.com",
+              "cidade": "Porto Alegre"
+            }
+          ]
+        },
+        {
+          "name": "pedidos",
+          "columns": [
+            "id",
+            "cliente_id",
+            "valor_total",
+            "status",
+            "data_pedido"
+          ],
+          "rows": [
+            {
+              "id": 101,
+              "cliente_id": 1,
+              "valor_total": "1250.50",
+              "status": "FINALIZADO",
+              "data_pedido": "2026-03-01 10:30"
+            },
+            {
+              "id": 102,
+              "cliente_id": 2,
+              "valor_total": "450.00",
+              "status": "FINALIZADO",
+              "data_pedido": "2026-03-02 14:15"
+            },
+            {
+              "id": 103,
+              "cliente_id": 1,
+              "valor_total": "890.00",
+              "status": "FINALIZADO",
+              "data_pedido": "2026-03-05 09:12"
+            },
+            {
+              "id": 104,
+              "cliente_id": 3,
+              "valor_total": "3100.20",
+              "status": "FINALIZADO",
+              "data_pedido": "2026-03-06 18:40"
+            },
+            {
+              "id": 105,
+              "cliente_id": 4,
+              "valor_total": "150.00",
+              "status": "CANCELADO",
+              "data_pedido": "2026-03-07 11:00"
+            }
+          ]
+        },
+        {
+          "name": "itens_pedido",
+          "columns": [
+            "id",
+            "pedido_id",
+            "produto_nome",
+            "quantidade",
+            "preco_unitario"
+          ],
+          "rows": [
+            {
+              "id": 1,
+              "pedido_id": 101,
+              "produto_nome": "Monitor 27 pol",
+              "quantidade": 1,
+              "preco_unitario": "1250.50"
+            },
+            {
+              "id": 2,
+              "pedido_id": 102,
+              "produto_nome": "Teclado Mecânico",
+              "quantidade": 1,
+              "preco_unitario": "450.00"
+            },
+            {
+              "id": 3,
+              "pedido_id": 104,
+              "produto_nome": "Notebook Gamer",
+              "quantidade": 1,
+              "preco_unitario": "3100.20"
+            }
+          ]
+        }
+      ],
+      "starterSql": "-- Digite sua consulta SQL aqui\nSELECT \n    c.nome, \n    SUM(p.valor_total) AS faturamento_total\nFROM clientes c\nJOIN pedidos p ON p.cliente_id = c.id\nWHERE p.status = 'FINALIZADO'\nGROUP BY c.id, c.nome\nORDER BY faturamento_total DESC, c.nome ASC\nLIMIT 5;",
+      "expectedColumns": [
+        "nome",
+        "faturamento_total"
+      ]
+    },
+    {
+      "id": 2,
+      "title": "Produtos com Estoque Abaixo da Média",
+      "difficulty": "Fácil",
+      "categories": [
+        "Subconsultas",
+        "Filtragem",
+        "Funções"
+      ],
+      "category": "Subconsultas",
+      "status": "ATTEMPTED",
+      "publishedStatus": "PUBLISHED",
+      "description": "Identifique os produtos do estoque que precisam de reposição imediata.\n\nEscreva uma consulta que retorne o **nome do produto** e a **quantidade em estoque** de todos os itens cujo estoque atual seja estritamente menor do que a média geral de estoque da loja.\n\n**Regras:**\n- Filtre apenas produtos com `ativo = true`.\n- Ordene do menor estoque para o maior.",
+      "schemaSql": "CREATE TABLE categorias (\n    id SERIAL PRIMARY KEY,\n    nome VARCHAR(50) NOT NULL\n);\n\nCREATE TABLE produtos (\n    id SERIAL PRIMARY KEY,\n    categoria_id INT REFERENCES categorias(id),\n    nome VARCHAR(80) NOT NULL,\n    quantidade_estoque INT NOT NULL DEFAULT 0,\n    preco NUMERIC(10,2) NOT NULL,\n    ativo BOOLEAN DEFAULT true\n);",
+      "sampleTables": [
+        {
+          "name": "categorias",
+          "columns": [
+            "id",
+            "nome"
+          ],
+          "rows": [
+            {
+              "id": 1,
+              "nome": "Periféricos"
+            },
+            {
+              "id": 2,
+              "nome": "Monitores"
+            }
+          ]
+        },
+        {
+          "name": "produtos",
+          "columns": [
+            "id",
+            "categoria_id",
+            "nome",
+            "quantidade_estoque",
+            "preco",
+            "ativo"
+          ],
+          "rows": [
+            {
+              "id": 1,
+              "categoria_id": 1,
+              "nome": "Teclado RGB",
+              "quantidade_estoque": 12,
+              "preco": "250.00",
+              "ativo": true
+            },
+            {
+              "id": 2,
+              "categoria_id": 1,
+              "nome": "Mouse Gamer",
+              "quantidade_estoque": 85,
+              "preco": "90.00",
+              "ativo": true
+            },
+            {
+              "id": 3,
+              "categoria_id": 2,
+              "nome": "Monitor 144Hz",
+              "quantidade_estoque": 4,
+              "preco": "1200.00",
+              "ativo": true
+            },
+            {
+              "id": 4,
+              "categoria_id": 1,
+              "nome": "Headset 7.1",
+              "quantidade_estoque": 35,
+              "preco": "320.00",
+              "ativo": true
+            }
+          ]
+        }
+      ],
+      "starterSql": "SELECT nome, quantidade_estoque\nFROM produtos\nWHERE ativo = true \n  AND quantidade_estoque < (SELECT AVG(quantidade_estoque) FROM produtos)\nORDER BY quantidade_estoque ASC;",
+      "expectedColumns": [
+        "nome",
+        "quantidade_estoque"
+      ]
+    },
+    {
+      "id": 3,
+      "title": "Média Salarial por Departamento",
+      "difficulty": "Difícil",
+      "categories": [
+        "Agrupamento",
+        "Filtragem",
+        "JOINs"
+      ],
+      "category": "Agrupamento",
+      "status": "UNSOLVED",
+      "publishedStatus": "PUBLISHED",
+      "description": "Gere um relatório executivo para o setor de Recursos Humanos.\n\nA consulta deve retornar a **sigla do departamento**, o **total de colaboradores** e o **salário médio** formatado com duas casas decimais.\n\n**Regras:**\n- Considere apenas departamentos que possuam mais de 2 colaboradores vinculados.\n- Ordene pelo salário médio em ordem decrescente.",
+      "schemaSql": "CREATE TABLE departamentos (\n    id SERIAL PRIMARY KEY,\n    sigla VARCHAR(10) NOT NULL UNIQUE,\n    nome VARCHAR(60) NOT NULL\n);\n\nCREATE TABLE colaboradores (\n    id SERIAL PRIMARY KEY,\n    departamento_id INT REFERENCES departamentos(id),\n    nome VARCHAR(100) NOT NULL,\n    salario NUMERIC(10,2) NOT NULL,\n    data_admissao DATE NOT NULL\n);",
+      "sampleTables": [
+        {
+          "name": "departamentos",
+          "columns": [
+            "id",
+            "sigla",
+            "nome"
+          ],
+          "rows": [
+            {
+              "id": 1,
+              "sigla": "TI",
+              "nome": "Tecnologia da Informação"
+            },
+            {
+              "id": 2,
+              "sigla": "MKT",
+              "nome": "Marketing & Growth"
+            },
+            {
+              "id": 3,
+              "sigla": "FIN",
+              "nome": "Financeiro"
+            }
+          ]
+        },
+        {
+          "name": "colaboradores",
+          "columns": [
+            "id",
+            "departamento_id",
+            "nome",
+            "salario",
+            "data_admissao"
+          ],
+          "rows": [
+            {
+              "id": 1,
+              "departamento_id": 1,
+              "nome": "Alice Silva",
+              "salario": "9500.00",
+              "data_admissao": "2023-01-15"
+            },
+            {
+              "id": 2,
+              "departamento_id": 1,
+              "nome": "Bruno Costa",
+              "salario": "8200.00",
+              "data_admissao": "2023-06-10"
+            },
+            {
+              "id": 3,
+              "departamento_id": 1,
+              "nome": "Carla Dias",
+              "salario": "11000.00",
+              "data_admissao": "2022-03-01"
+            },
+            {
+              "id": 4,
+              "departamento_id": 2,
+              "nome": "Daniel Ramos",
+              "salario": "4500.00",
+              "data_admissao": "2024-02-12"
+            }
+          ]
+        }
+      ],
+      "starterSql": "SELECT \n    d.sigla, \n    COUNT(c.id) AS total_colaboradores, \n    ROUND(AVG(c.salario), 2) AS salario_medio\nFROM departamentos d\nJOIN colaboradores c ON c.departamento_id = d.id\nGROUP BY d.id, d.sigla\nHAVING COUNT(c.id) > 2\nORDER BY salario_medio DESC;",
+      "expectedColumns": [
+        "sigla",
+        "total_colaboradores",
+        "salario_medio"
+      ]
+    },
+    {
+      "id": 4,
+      "title": "Clientes Sem Pedidos Realizados",
+      "difficulty": "Médio",
+      "categories": [
+        "Condicional",
+        "Filtragem",
+        "JOINs"
+      ],
+      "category": "Condicional",
+      "status": "UNSOLVED",
+      "publishedStatus": "PUBLISHED",
+      "description": "A equipe de relacionamento precisa da lista de clientes cadastrados que nunca realizaram nenhum pedido na plataforma.\n\nEscreva uma consulta que retorne o **nome** e o **e-mail** de todos os clientes sem pedidos associados, ordenados alfabeticamente pelo nome.",
+      "schemaSql": "CREATE TABLE clientes (\n    id SERIAL PRIMARY KEY,\n    nome VARCHAR(100) NOT NULL,\n    email VARCHAR(120) NOT NULL\n);\n\nCREATE TABLE pedidos (\n    id SERIAL PRIMARY KEY,\n    cliente_id INT REFERENCES clientes(id),\n    data_pedido TIMESTAMP NOT NULL\n);",
+      "sampleTables": [
+        {
+          "name": "clientes",
+          "columns": [
+            "id",
+            "nome",
+            "email"
+          ],
+          "rows": [
+            {
+              "id": 1,
+              "nome": "Fernanda Lima",
+              "email": "fernanda@exemplo.com"
+            },
+            {
+              "id": 2,
+              "nome": "Gabriel Torres",
+              "email": "gabriel@exemplo.com"
+            }
+          ]
+        },
+        {
+          "name": "pedidos",
+          "columns": [
+            "id",
+            "cliente_id",
+            "data_pedido"
+          ],
+          "rows": [
+            {
+              "id": 1,
+              "cliente_id": 1,
+              "data_pedido": "2026-03-25"
+            }
+          ]
+        }
+      ],
+      "starterSql": "SELECT c.nome, c.email\nFROM clientes c\nLEFT JOIN pedidos p ON p.cliente_id = c.id\nWHERE p.id IS NULL\nORDER BY c.nome ASC;",
+      "expectedColumns": [
+        "nome",
+        "email"
+      ]
+    },
+    {
+      "id": 5,
+      "title": "Auditoria e Higienização de E-mails Duplicados",
+      "difficulty": "Difícil",
+      "categories": [
+        "Agrupamento",
+        "Distintos",
+        "Filtragem",
+        "Funções",
+        "Janelas",
+        "Texto"
+      ],
+      "category": "Agrupamento",
+      "status": "UNSOLVED",
+      "publishedStatus": "PUBLISHED",
+      "description": "A equipe de segurança e compliance precisa higienizar a base de contatos corporativos e detectar registros duplicados.\n\nEscreva uma consulta SQL que:\n1. Normalize o e-mail removendo espaços em branco (`TRIM`) e convertendo para minúsculas (`LOWER`).\n2. Utilize a função de janela `ROW_NUMBER() OVER (PARTITION BY ... ORDER BY id ASC)` para numerar ocorrências duplicadas do mesmo e-mail normalizado.\n3. Filtre apenas os registros de clientes ativos com domínios corporativos válidos (`LIKE '%@empresa.com'`).\n4. Retorne o id, o nome em maiúsculas (`UPPER`), o e-mail limpo e a contagem da duplicidade.",
+      "schemaSql": "CREATE TABLE contatos (\n    id SERIAL PRIMARY KEY,\n    nome VARCHAR(100) NOT NULL,\n    email VARCHAR(150) NOT NULL,\n    ativo BOOLEAN DEFAULT true,\n    criado_em TIMESTAMP DEFAULT NOW()\n);",
+      "sampleTables": [
+        {
+          "name": "contatos",
+          "columns": [
+            "id",
+            "nome",
+            "email",
+            "ativo",
+            "criado_em"
+          ],
+          "rows": [
+            {
+              "id": 1,
+              "nome": "João Silva",
+              "email": "  JOAO@empresa.com ",
+              "ativo": true,
+              "criado_em": "2026-01-10"
+            },
+            {
+              "id": 2,
+              "nome": "Joao S.",
+              "email": "joao@empresa.com",
+              "ativo": true,
+              "criado_em": "2026-01-15"
+            },
+            {
+              "id": 3,
+              "nome": "Maria Clara",
+              "email": "maria@empresa.com",
+              "ativo": true,
+              "criado_em": "2026-02-01"
+            },
+            {
+              "id": 4,
+              "nome": "Pedro Lima",
+              "email": "pedro@gmail.com",
+              "ativo": true,
+              "criado_em": "2026-02-10"
+            }
+          ]
+        }
+      ],
+      "starterSql": "SELECT \n    id,\n    UPPER(nome) AS nome_formatado,\n    LOWER(TRIM(email)) AS email_normalizado,\n    ROW_NUMBER() OVER(PARTITION BY LOWER(TRIM(email)) ORDER BY id ASC) AS num_ocorrencia\nFROM contatos\nWHERE ativo = true\n  AND LOWER(email) LIKE '%@empresa.com'\nORDER BY email_normalizado ASC, num_ocorrencia ASC;",
+      "expectedColumns": [
+        "id",
+        "nome_formatado",
+        "email_normalizado",
+        "num_ocorrencia"
+      ]
+    },
+    {
+      "id": 6,
+      "title": "Análise de Cohort e Retenção Mensal de Compras",
+      "difficulty": "Difícil",
+      "categories": [
+        "Agrupamento",
+        "Condicional",
+        "CTEs",
+        "Datas",
+        "Filtragem",
+        "JOINs"
+      ],
+      "category": "Agrupamento",
+      "status": "UNSOLVED",
+      "publishedStatus": "PUBLISHED",
+      "description": "Gere uma análise de Cohort mensal para medir a taxa de retenção de clientes por safra de entrada.\n\nUtilize CTEs (`WITH`) para:\n1. Descobrir o mês da primeira compra de cada cliente usando `DATE_TRUNC('month', MIN(data_pedido))`.\n2. Cruzar com todos os pedidos finalizados e calcular a diferença em meses entre o pedido atual e a safra de entrada.\n3. Classificar com `CASE WHEN` pedidos de clientes 'Novos' (mês 0) vs 'Recorrentes' (mês > 0).\n4. Agrupar por safra e retornar o total financeiro transacionado.",
+      "schemaSql": "CREATE TABLE clientes_cohort (\n    id SERIAL PRIMARY KEY,\n    nome VARCHAR(100) NOT NULL\n);\n\nCREATE TABLE pedidos_cohort (\n    id SERIAL PRIMARY KEY,\n    cliente_id INT REFERENCES clientes_cohort(id),\n    valor NUMERIC(10,2) NOT NULL,\n    status VARCHAR(20) NOT NULL,\n    data_pedido TIMESTAMP NOT NULL\n);",
+      "sampleTables": [
+        {
+          "name": "pedidos_cohort",
+          "columns": [
+            "id",
+            "cliente_id",
+            "valor",
+            "status",
+            "data_pedido"
+          ],
+          "rows": [
+            {
+              "id": 1,
+              "cliente_id": 1,
+              "valor": "200.00",
+              "status": "FINALIZADO",
+              "data_pedido": "2026-01-05 10:00"
+            },
+            {
+              "id": 2,
+              "cliente_id": 1,
+              "valor": "350.00",
+              "status": "FINALIZADO",
+              "data_pedido": "2026-02-12 15:30"
+            },
+            {
+              "id": 3,
+              "cliente_id": 2,
+              "valor": "150.00",
+              "status": "FINALIZADO",
+              "data_pedido": "2026-02-18 11:20"
+            }
+          ]
+        }
+      ],
+      "starterSql": "WITH primeira_compra AS (\n    SELECT \n        cliente_id, \n        DATE_TRUNC('month', MIN(data_pedido)) AS safra_mes\n    FROM pedidos_cohort\n    WHERE status = 'FINALIZADO'\n    GROUP BY cliente_id\n)\nSELECT \n    pc.safra_mes,\n    CASE \n        WHEN DATE_TRUNC('month', p.data_pedido) = pc.safra_mes THEN 'Novo'\n        ELSE 'Recorrente'\n    END AS tipo_cliente,\n    COUNT(p.id) AS total_pedidos,\n    SUM(p.valor) AS receita_total\nFROM pedidos_cohort p\nJOIN primeira_compra pc ON pc.cliente_id = p.cliente_id\nWHERE p.status = 'FINALIZADO'\nGROUP BY pc.safra_mes, tipo_cliente\nORDER BY pc.safra_mes ASC, tipo_cliente ASC;",
+      "expectedColumns": [
+        "safra_mes",
+        "tipo_cliente",
+        "total_pedidos",
+        "receita_total"
+      ]
+    },
+    {
+      "id": 7,
+      "title": "Ranking Trimestral de Vendedores com Bonificação",
+      "difficulty": "Médio",
+      "categories": [
+        "Condicional",
+        "Datas",
+        "Funções",
+        "Janelas",
+        "JOINs"
+      ],
+      "category": "Condicional",
+      "status": "UNSOLVED",
+      "publishedStatus": "PUBLISHED",
+      "description": "A diretoria de vendas instituiu um programa de bonificação escalonada por trimestre do ano.\n\nEscreva uma consulta que calcule:\n1. O trimestre da venda usando `EXTRACT(QUARTER FROM data_venda)`.\n2. A soma de vendas por vendedor e por trimestre.\n3. O ranking dos vendedores em cada trimestre via `DENSE_RANK() OVER (PARTITION BY trimestre ORDER BY total_vendas DESC)`.\n4. Uma coluna de bônus condicional (`CASE WHEN rank = 1 THEN '15%' WHEN rank = 2 THEN '10%' ELSE '5%' END`).",
+      "schemaSql": "CREATE TABLE vendedores (\n    id SERIAL PRIMARY KEY,\n    nome VARCHAR(80) NOT NULL\n);\n\nCREATE TABLE vendas_trimestre (\n    id SERIAL PRIMARY KEY,\n    vendedor_id INT REFERENCES vendedores(id),\n    valor NUMERIC(10,2) NOT NULL,\n    data_venda DATE NOT NULL\n);",
+      "sampleTables": [
+        {
+          "name": "vendedores",
+          "columns": [
+            "id",
+            "nome"
+          ],
+          "rows": [
+            {
+              "id": 1,
+              "nome": "Bruno Sales"
+            },
+            {
+              "id": 2,
+              "nome": "Camila Vendas"
+            }
+          ]
+        }
+      ],
+      "starterSql": "SELECT \n    v.nome,\n    EXTRACT(QUARTER FROM vt.data_venda) AS trimestre,\n    SUM(vt.valor) AS total_vendas,\n    DENSE_RANK() OVER (\n        PARTITION BY EXTRACT(QUARTER FROM vt.data_venda) \n        ORDER BY SUM(vt.valor) DESC\n    ) AS posicao,\n    CASE \n        WHEN DENSE_RANK() OVER (PARTITION BY EXTRACT(QUARTER FROM vt.data_venda) ORDER BY SUM(vt.valor) DESC) = 1 THEN '15% Bonus'\n        WHEN DENSE_RANK() OVER (PARTITION BY EXTRACT(QUARTER FROM vt.data_venda) ORDER BY SUM(vt.valor) DESC) = 2 THEN '10% Bonus'\n        ELSE '5% Bonus'\n    END AS faixa_bonus\nFROM vendedores v\nJOIN vendas_trimestre vt ON vt.vendedor_id = v.id\nGROUP BY v.id, v.nome, trimestre\nORDER BY trimestre ASC, posicao ASC;",
+      "expectedColumns": [
+        "nome",
+        "trimestre",
+        "total_vendas",
+        "posicao",
+        "faixa_bonus"
+      ]
+    },
+    {
+      "id": 8,
+      "title": "Localização de Clientes VIP com Filtros Especiais",
+      "difficulty": "Médio",
+      "categories": [
+        "Datas",
+        "Distintos",
+        "Filtragem",
+        "Subconsultas",
+        "Texto"
+      ],
+      "category": "Datas",
+      "status": "UNSOLVED",
+      "publishedStatus": "PUBLISHED",
+      "description": "Descubra clientes com alto engajamento recente e padrões específicos de e-mail.\n\nRegras da consulta:\n1. Obtenha a lista sem duplicatas (`DISTINCT`) de cidades e nomes de clientes.\n2. Filtre clientes cujo e-mail contenha domínio parceiro (`LIKE '%@parceiro.com'` ou `LIKE '%@tech.com'`).\n3. O cliente deve ter ao menos um pedido realizado no ano de 2026 (`EXTRACT(YEAR FROM data_pedido) = 2026`).\n4. Utilize uma subconsulta para garantir que o cliente realizou compras com valor acima da média geral da plataforma.",
+      "schemaSql": "CREATE TABLE clientes_vip (\n    id SERIAL PRIMARY KEY,\n    nome VARCHAR(100) NOT NULL,\n    email VARCHAR(120) NOT NULL,\n    cidade VARCHAR(60) NOT NULL\n);\n\nCREATE TABLE pedidos_vip (\n    id SERIAL PRIMARY KEY,\n    cliente_id INT REFERENCES clientes_vip(id),\n    valor NUMERIC(10,2) NOT NULL,\n    data_pedido DATE NOT NULL\n);",
+      "sampleTables": [
+        {
+          "name": "clientes_vip",
+          "columns": [
+            "id",
+            "nome",
+            "email",
+            "cidade"
+          ],
+          "rows": [
+            {
+              "id": 1,
+              "nome": "Lucas Moura",
+              "email": "lucas@tech.com",
+              "cidade": "Campinas"
+            },
+            {
+              "id": 2,
+              "nome": "Renata Abreu",
+              "email": "renata@parceiro.com",
+              "cidade": "Curitiba"
+            }
+          ]
+        }
+      ],
+      "starterSql": "SELECT DISTINCT \n    c.nome, \n    c.cidade, \n    LOWER(c.email) AS email_contato\nFROM clientes_vip c\nJOIN pedidos_vip p ON p.cliente_id = c.id\nWHERE (c.email LIKE '%@tech.com' OR c.email LIKE '%@parceiro.com')\n  AND EXTRACT(YEAR FROM p.data_pedido) = 2026\n  AND p.valor > (SELECT AVG(valor) FROM pedidos_vip)\nORDER BY c.nome ASC;",
+      "expectedColumns": [
+        "nome",
+        "cidade",
+        "email_contato"
+      ]
+    },
+    {
+      "id": 9,
+      "title": "Consolidação de Catálogo: Sem Giro vs Mais Vendidos",
+      "difficulty": "Fácil",
+      "categories": [
+        "Agrupamento",
+        "Conjuntos",
+        "Filtragem",
+        "JOINs"
+      ],
+      "category": "Agrupamento",
+      "status": "UNSOLVED",
+      "publishedStatus": "PUBLISHED",
+      "description": "A equipe de compras precisa de um catálogo combinado unificando produtos sem giro e os campeões de venda em uma só listagem.\n\nUtilize a operação de conjunto `UNION ALL` para unificar:\n1. Bloco 1: Produtos com 0 pedidos vinculados (`LEFT JOIN` com `pedido_id IS NULL`), rotulados como 'Sem Giro'.\n2. Bloco 2: Os 3 produtos com maior quantidade total vendida, rotulados como 'Top Vendas'.",
+      "schemaSql": "CREATE TABLE catalogo_itens (\n    id SERIAL PRIMARY KEY,\n    nome VARCHAR(80) NOT NULL,\n    preco NUMERIC(10,2) NOT NULL\n);\n\nCREATE TABLE compras_itens (\n    id SERIAL PRIMARY KEY,\n    item_id INT REFERENCES catalogo_itens(id),\n    quantidade INT NOT NULL\n);",
+      "sampleTables": [
+        {
+          "name": "catalogo_itens",
+          "columns": [
+            "id",
+            "nome",
+            "preco"
+          ],
+          "rows": [
+            {
+              "id": 1,
+              "nome": "Mouse Sem Fio",
+              "preco": "120.00"
+            },
+            {
+              "id": 2,
+              "nome": "Cabo HDMI 2m",
+              "preco": "35.00"
+            },
+            {
+              "id": 3,
+              "nome": "Suporte Monitor",
+              "preco": "89.00"
+            }
+          ]
+        }
+      ],
+      "starterSql": "(SELECT \n    ci.nome, \n    'Sem Giro' AS categoria_status, \n    0 AS total_unidades\nFROM catalogo_itens ci\nLEFT JOIN compras_itens c ON c.item_id = ci.id\nWHERE c.id IS NULL)\nUNION ALL\n(SELECT \n    ci.nome, \n    'Top Vendas' AS categoria_status, \n    SUM(c.quantidade) AS total_unidades\nFROM catalogo_itens ci\nJOIN compras_itens c ON c.item_id = ci.id\nGROUP BY ci.id, ci.nome\nORDER BY total_unidades DESC\nLIMIT 3)\nORDER BY categoria_status ASC, nome ASC;",
+      "expectedColumns": [
+        "nome",
+        "categoria_status",
+        "total_unidades"
+      ]
+    },
+    {
+      "id": 10,
+      "title": "Cidades Únicas com Entregas Concluídas",
+      "difficulty": "Fácil",
+      "categories": [
+        "Distintos",
+        "Filtragem"
+      ],
+      "category": "Distintos",
+      "status": "UNSOLVED",
+      "publishedStatus": "PUBLISHED",
+      "description": "A logística precisa da relação geográfica única de todos os municípios atendidos com entregas bem-sucedidas.\n\nEscreva uma consulta com `DISTINCT` que retorne a coluna de cidade dos clientes com pedidos entregues (`status = 'ENTREGUE'`), ordenando alfabeticamente.",
+      "schemaSql": "CREATE TABLE rotas_clientes (\n    id SERIAL PRIMARY KEY,\n    cidade VARCHAR(60) NOT NULL\n);\n\nCREATE TABLE entregas (\n    id SERIAL PRIMARY KEY,\n    cliente_id INT REFERENCES rotas_clientes(id),\n    status VARCHAR(20) NOT NULL\n);",
+      "sampleTables": [
+        {
+          "name": "rotas_clientes",
+          "columns": [
+            "id",
+            "cidade"
+          ],
+          "rows": [
+            {
+              "id": 1,
+              "cidade": "Campinas"
+            },
+            {
+              "id": 2,
+              "cidade": "São Paulo"
+            },
+            {
+              "id": 3,
+              "cidade": "Campinas"
+            }
+          ]
+        }
+      ],
+      "starterSql": "SELECT DISTINCT rc.cidade\nFROM rotas_clientes rc\nJOIN entregas e ON e.cliente_id = rc.id\nWHERE e.status = 'ENTREGUE'\nORDER BY rc.cidade ASC;",
+      "expectedColumns": [
+        "cidade"
+      ]
+    },
+    {
+      "id": 11,
+      "title": "Padronização e Formatação de Textos de Usuários",
+      "difficulty": "Fácil",
+      "categories": [
+        "Texto"
+      ],
+      "category": "Texto",
+      "status": "UNSOLVED",
+      "publishedStatus": "PUBLISHED",
+      "description": "Normalização cadastral de dados textuais.\n\nEscreva uma consulta SQL que retorne o identificador do usuário e uma coluna formatada contendo o nome completo em maiúsculas (`UPPER`) e o primeiro nome extraído com `SPLIT_PART(nome, ' ', 1)`.",
+      "schemaSql": "CREATE TABLE cadastros_brutos (\n    id SERIAL PRIMARY KEY,\n    nome VARCHAR(100) NOT NULL,\n    bio TEXT\n);",
+      "sampleTables": [
+        {
+          "name": "cadastros_brutos",
+          "columns": [
+            "id",
+            "nome",
+            "bio"
+          ],
+          "rows": [
+            {
+              "id": 1,
+              "nome": "Carlos Eduardo",
+              "bio": "Engenheiro de Dados"
+            },
+            {
+              "id": 2,
+              "nome": "Ana Beatriz",
+              "bio": "Analista de BI"
+            }
+          ]
+        }
+      ],
+      "starterSql": "SELECT \n    id,\n    UPPER(TRIM(nome)) AS nome_completo,\n    SPLIT_PART(TRIM(nome), ' ', 1) AS primeiro_nome\nFROM cadastros_brutos\nORDER BY id ASC;",
+      "expectedColumns": [
+        "id",
+        "nome_completo",
+        "primeiro_nome"
+      ]
+    },
+    {
+      "id": 12,
+      "title": "Média Salarial por Departamento com Cláusula HAVING",
+      "difficulty": "Médio",
+      "categories": [
+        "Agrupamento",
+        "Filtragem",
+        "Funções",
+        "JOINs"
+      ],
+      "category": "Agrupamento",
+      "status": "UNSOLVED",
+      "publishedStatus": "PUBLISHED",
+      "description": "A diretoria de Recursos Humanos deseja identificar os departamentos mais onerosos da empresa.\n\nEscreva uma consulta SQL que retorne o **nome do departamento**, a **quantidade de colaboradores ativos** e a **média salarial** (arredondada para 2 casas decimais com `ROUND(..., 2)`).\n\n**Regras:**\n- Considere apenas funcionários com `ativo = true`.\n- Filtre via `HAVING` apenas os departamentos com média salarial superior a R$ 5.000,00 e que possuam no mínimo 2 colaboradores.\n- Ordene pela média salarial em ordem decrescente, e em caso de empate, alfabeticamente pelo nome do departamento.",
+      "schemaSql": "CREATE TABLE departamentos (\n    id SERIAL PRIMARY KEY,\n    nome VARCHAR(80) NOT NULL\n);\n\nCREATE TABLE funcionarios (\n    id SERIAL PRIMARY KEY,\n    departamento_id INT NOT NULL REFERENCES departamentos(id),\n    nome VARCHAR(100) NOT NULL,\n    salario NUMERIC(10,2) NOT NULL,\n    ativo BOOLEAN DEFAULT true\n);",
+      "sampleTables": [
+        {
+          "name": "departamentos",
+          "columns": [
+            "id",
+            "nome"
+          ],
+          "rows": [
+            {
+              "id": 1,
+              "nome": "Engenharia de Software"
+            },
+            {
+              "id": 2,
+              "nome": "Marketing"
+            },
+            {
+              "id": 3,
+              "nome": "Ciência de Dados"
+            }
+          ]
+        },
+        {
+          "name": "funcionarios",
+          "columns": [
+            "id",
+            "departamento_id",
+            "nome",
+            "salario",
+            "ativo"
+          ],
+          "rows": [
+            {
+              "id": 1,
+              "departamento_id": 1,
+              "nome": "Lucas Lima",
+              "salario": "7500.00",
+              "ativo": true
+            },
+            {
+              "id": 2,
+              "departamento_id": 1,
+              "nome": "Paula Souza",
+              "salario": "8200.00",
+              "ativo": true
+            },
+            {
+              "id": 3,
+              "departamento_id": 2,
+              "nome": "Rodrigo Matos",
+              "salario": "3500.00",
+              "ativo": true
+            },
+            {
+              "id": 4,
+              "departamento_id": 3,
+              "nome": "Camila Duarte",
+              "salario": "9000.00",
+              "ativo": true
+            },
+            {
+              "id": 5,
+              "departamento_id": 3,
+              "nome": "Gabriel Ramos",
+              "salario": "6500.00",
+              "ativo": true
+            }
+          ]
+        }
+      ],
+      "starterSql": "SELECT \n    d.nome AS departamento,\n    COUNT(f.id) AS quantidade_colaboradores,\n    ROUND(AVG(f.salario), 2) AS media_salarial\nFROM departamentos d\nJOIN funcionarios f ON f.departamento_id = d.id\nWHERE f.ativo = true\nGROUP BY d.id, d.nome\nHAVING AVG(f.salario) > 5000.00 AND COUNT(f.id) >= 2\nORDER BY media_salarial DESC, departamento ASC;",
+      "expectedColumns": [
+        "departamento",
+        "quantidade_colaboradores",
+        "media_salarial"
+      ]
+    },
+    {
+      "id": 13,
+      "title": "Comparativo de Vendas com Mês Anterior usando LAG",
+      "difficulty": "Difícil",
+      "categories": [
+        "Datas",
+        "Funções",
+        "Janelas"
+      ],
+      "category": "Janelas",
+      "status": "UNSOLVED",
+      "publishedStatus": "PUBLISHED",
+      "description": "A equipe financeira precisa acompanhar a evolução mensal das receitas do e-commerce.\n\nUtilize a função analítica de janela `LAG()` para obter o faturamento do mês anterior e calcular a diferença bruta (`total_faturado - faturamento_anterior`).\n\n**Regras:**\n- Para o primeiro mês registrado (sem histórico prévio), retorne 0 no faturamento anterior e 0 na diferença.\n- Ordene cronologicamente pelo mês de referência.",
+      "schemaSql": "CREATE TABLE vendas_mensais (\n    id SERIAL PRIMARY KEY,\n    mes_referencia DATE NOT NULL UNIQUE,\n    total_faturado NUMERIC(12,2) NOT NULL\n);",
+      "sampleTables": [
+        {
+          "name": "vendas_mensais",
+          "columns": [
+            "id",
+            "mes_referencia",
+            "total_faturado"
+          ],
+          "rows": [
+            {
+              "id": 1,
+              "mes_referencia": "2026-01-01",
+              "total_faturado": "45000.00"
+            },
+            {
+              "id": 2,
+              "mes_referencia": "2026-02-01",
+              "total_faturado": "52000.00"
+            },
+            {
+              "id": 3,
+              "mes_referencia": "2026-03-01",
+              "total_faturado": "49500.00"
+            },
+            {
+              "id": 4,
+              "mes_referencia": "2026-04-01",
+              "total_faturado": "61000.00"
+            }
+          ]
+        }
+      ],
+      "starterSql": "SELECT \n    mes_referencia,\n    total_faturado,\n    COALESCE(LAG(total_faturado) OVER (ORDER BY mes_referencia ASC), 0) AS faturamento_anterior,\n    total_faturado - COALESCE(LAG(total_faturado) OVER (ORDER BY mes_referencia ASC), total_faturado) AS diferenca_mensal\nFROM vendas_mensais\nORDER BY mes_referencia ASC;",
+      "expectedColumns": [
+        "mes_referencia",
+        "total_faturado",
+        "faturamento_anterior",
+        "diferenca_mensal"
+      ]
+    },
+    {
+      "id": 14,
+      "title": "Clientes Recorrentes Sem Reclamações Abertas (NOT EXISTS)",
+      "difficulty": "Médio",
+      "categories": [
+        "Filtragem",
+        "Funções",
+        "JOINs",
+        "Subconsultas"
+      ],
+      "category": "Subconsultas",
+      "status": "UNSOLVED",
+      "publishedStatus": "PUBLISHED",
+      "description": "A gerência de Sucesso do Cliente deseja premiar clientes fiéis e satisfeitos.\n\nEscreva uma consulta que retorne o **id do cliente**, o **nome** e a **quantidade de pedidos**, selecionando apenas quem realizou mais de 2 compras e que **NÃO** possua chamados de suporte abertos (`status = 'ABERTO'`).\n\n**Regras:**\n- Utilize `NOT EXISTS` para verificar os chamados de suporte.\n- Ordene da maior quantidade de pedidos para a menor; em empate, pelo nome alfabeticamente.",
+      "schemaSql": "CREATE TABLE clientes_loja (\n    id SERIAL PRIMARY KEY,\n    nome VARCHAR(100) NOT NULL,\n    email VARCHAR(120) NOT NULL\n);\n\nCREATE TABLE pedidos_compra (\n    id SERIAL PRIMARY KEY,\n    cliente_id INT NOT NULL REFERENCES clientes_loja(id),\n    valor NUMERIC(10,2) NOT NULL\n);\n\nCREATE TABLE suporte_chamados (\n    id SERIAL PRIMARY KEY,\n    cliente_id INT NOT NULL REFERENCES clientes_loja(id),\n    assunto VARCHAR(100) NOT NULL,\n    status VARCHAR(20) NOT NULL\n);",
+      "sampleTables": [
+        {
+          "name": "clientes_loja",
+          "columns": [
+            "id",
+            "nome",
+            "email"
+          ],
+          "rows": [
+            {
+              "id": 1,
+              "nome": "Beatriz Ramos",
+              "email": "beatriz@email.com"
+            },
+            {
+              "id": 2,
+              "nome": "Fernando Dias",
+              "email": "fernando@email.com"
+            },
+            {
+              "id": 3,
+              "nome": "Juliana Mendes",
+              "email": "juliana@email.com"
+            }
+          ]
+        },
+        {
+          "name": "pedidos_compra",
+          "columns": [
+            "id",
+            "cliente_id",
+            "valor"
+          ],
+          "rows": [
+            {
+              "id": 101,
+              "cliente_id": 1,
+              "valor": "250.00"
+            },
+            {
+              "id": 102,
+              "cliente_id": 1,
+              "valor": "180.00"
+            },
+            {
+              "id": 103,
+              "cliente_id": 1,
+              "valor": "400.00"
+            },
+            {
+              "id": 104,
+              "cliente_id": 2,
+              "valor": "520.00"
+            },
+            {
+              "id": 105,
+              "cliente_id": 3,
+              "valor": "110.00"
+            }
+          ]
+        },
+        {
+          "name": "suporte_chamados",
+          "columns": [
+            "id",
+            "cliente_id",
+            "assunto",
+            "status"
+          ],
+          "rows": [
+            {
+              "id": 1,
+              "cliente_id": 2,
+              "assunto": "Atraso na entrega",
+              "status": "ABERTO"
+            },
+            {
+              "id": 2,
+              "cliente_id": 1,
+              "assunto": "Dúvida cadastral",
+              "status": "RESOLVIDO"
+            }
+          ]
+        }
+      ],
+      "starterSql": "SELECT \n    c.id AS cliente_id,\n    c.nome,\n    COUNT(p.id) AS total_pedidos\nFROM clientes_loja c\nJOIN pedidos_compra p ON p.cliente_id = c.id\nWHERE NOT EXISTS (\n    SELECT 1 \n    FROM suporte_chamados s \n    WHERE s.cliente_id = c.id AND s.status = 'ABERTO'\n)\nGROUP BY c.id, c.nome\nHAVING COUNT(p.id) > 2\nORDER BY total_pedidos DESC, c.nome ASC;",
+      "expectedColumns": [
+        "cliente_id",
+        "nome",
+        "total_pedidos"
+      ]
+    },
+    {
+      "id": 15,
+      "title": "Hierarquia de Gestão Organizacional com CTE Recursiva",
+      "difficulty": "Difícil",
+      "categories": [
+        "CTEs",
+        "Filtragem",
+        "JOINs"
+      ],
+      "category": "CTEs",
+      "status": "UNSOLVED",
+      "publishedStatus": "PUBLISHED",
+      "description": "Mapeie toda a cadeia de liderança da empresa a partir do CEO (`gestor_id IS NULL`) até os colaboradores da base.\n\nConstrua uma consulta com `WITH RECURSIVE` que calcule a profundidade hierárquica (nível 1 para o CEO, nível 2 para diretores reportando ao CEO, nível 3 para gerentes, etc.).\n\n**Regras:**\n- Retorne as colunas: `id`, `nome`, `cargo` e `nivel_hierarquia`.\n- Ordene pelo nível hierárquico ascendente e depois pelo nome do colaborador em ordem alfabética.",
+      "schemaSql": "CREATE TABLE colaboradores (\n    id SERIAL PRIMARY KEY,\n    nome VARCHAR(100) NOT NULL,\n    cargo VARCHAR(80) NOT NULL,\n    gestor_id INT REFERENCES colaboradores(id)\n);",
+      "sampleTables": [
+        {
+          "name": "colaboradores",
+          "columns": [
+            "id",
+            "nome",
+            "cargo",
+            "gestor_id"
+          ],
+          "rows": [
+            {
+              "id": 1,
+              "nome": "Helena Castro",
+              "cargo": "CEO",
+              "gestor_id": null
+            },
+            {
+              "id": 2,
+              "nome": "Marcelo Dantas",
+              "cargo": "Diretor de Tecnologia",
+              "gestor_id": 1
+            },
+            {
+              "id": 3,
+              "nome": "Patricia Luz",
+              "cargo": "Diretora Comercial",
+              "gestor_id": 1
+            },
+            {
+              "id": 4,
+              "nome": "Guilherme Santos",
+              "cargo": "Tech Lead",
+              "gestor_id": 2
+            },
+            {
+              "id": 5,
+              "nome": "Larissa Faria",
+              "cargo": "Engenheira Sênior",
+              "gestor_id": 4
+            }
+          ]
+        }
+      ],
+      "starterSql": "WITH RECURSIVE arvore_gestao AS (\n    SELECT \n        id, \n        nome, \n        cargo, \n        gestor_id, \n        1 AS nivel_hierarquia\n    FROM colaboradores\n    WHERE gestor_id IS NULL\n\n    UNION ALL\n\n    SELECT \n        c.id, \n        c.nome, \n        c.cargo, \n        c.gestor_id, \n        ag.nivel_hierarquia + 1\n    FROM colaboradores c\n    JOIN arvore_gestao ag ON c.gestor_id = ag.id\n)\nSELECT \n    id,\n    nome,\n    cargo,\n    nivel_hierarquia\nFROM arvore_gestao\nORDER BY nivel_hierarquia ASC, nome ASC;",
+      "expectedColumns": [
+        "id",
+        "nome",
+        "cargo",
+        "nivel_hierarquia"
+      ]
+    },
+    {
+      "id": 16,
+      "title": "Primeiro Pedido de Cada Cliente com DISTINCT ON",
+      "difficulty": "Médio",
+      "categories": [
+        "Datas",
+        "Distintos",
+        "JOINs"
+      ],
+      "category": "Distintos",
+      "status": "UNSOLVED",
+      "publishedStatus": "PUBLISHED",
+      "description": "No PostgreSQL, a sintaxe `DISTINCT ON (expressao)` é altamente recomendada para deduplicação com base em ordenação específica.\n\nEscreva uma consulta que retorne a primeira compra histórica realizada por cada cliente (menor data de compra).\n\n**Regras:**\n- Retorne as colunas: `comprador_id`, `nome`, `primeira_data` e `primeiro_valor`.\n- Ordene obrigatoriamente por `c.id ASC, p.data_compra ASC`.",
+      "schemaSql": "CREATE TABLE compradores (\n    id SERIAL PRIMARY KEY,\n    nome VARCHAR(100) NOT NULL\n);\n\nCREATE TABLE historico_pedidos (\n    id SERIAL PRIMARY KEY,\n    comprador_id INT NOT NULL REFERENCES compradores(id),\n    data_compra TIMESTAMP NOT NULL,\n    valor NUMERIC(10,2) NOT NULL\n);",
+      "sampleTables": [
+        {
+          "name": "compradores",
+          "columns": [
+            "id",
+            "nome"
+          ],
+          "rows": [
+            {
+              "id": 1,
+              "nome": "Lucas Azevedo"
+            },
+            {
+              "id": 2,
+              "nome": "Mariana Prado"
+            }
+          ]
+        },
+        {
+          "name": "historico_pedidos",
+          "columns": [
+            "id",
+            "comprador_id",
+            "data_compra",
+            "valor"
+          ],
+          "rows": [
+            {
+              "id": 10,
+              "comprador_id": 1,
+              "data_compra": "2026-01-10 14:00",
+              "valor": "150.00"
+            },
+            {
+              "id": 11,
+              "comprador_id": 1,
+              "data_compra": "2026-02-15 09:30",
+              "valor": "320.00"
+            },
+            {
+              "id": 12,
+              "comprador_id": 2,
+              "data_compra": "2026-01-05 11:20",
+              "valor": "890.00"
+            },
+            {
+              "id": 13,
+              "comprador_id": 2,
+              "data_compra": "2026-01-20 18:00",
+              "valor": "45.00"
+            }
+          ]
+        }
+      ],
+      "starterSql": "SELECT DISTINCT ON (c.id)\n    c.id AS comprador_id,\n    c.nome,\n    p.data_compra AS primeira_data,\n    p.valor AS primeiro_valor\nFROM compradores c\nJOIN historico_pedidos p ON p.comprador_id = c.id\nORDER BY c.id ASC, p.data_compra ASC;",
+      "expectedColumns": [
+        "comprador_id",
+        "nome",
+        "primeira_data",
+        "primeiro_valor"
+      ]
+    },
+    {
+      "id": 17,
+      "title": "Auditoria de Emails Não Corporativos e Extração de Domínios",
+      "difficulty": "Fácil",
+      "categories": [
+        "Filtragem",
+        "Funções",
+        "Texto"
+      ],
+      "category": "Texto",
+      "status": "UNSOLVED",
+      "publishedStatus": "PUBLISHED",
+      "description": "A equipe de segurança da informação precisa auditar colaboradores ativos que estejam cadastrados com emails pessoais externos (que não terminam com `@sqlarena.com`).\n\nEscreva uma consulta que extraia o nome limpo com `TRIM()`, o email em minúsculas com `LOWER()` e o domínio do provedor utilizando `SUBSTRING` e `POSITION('@' IN email)`.\n\n**Regras:**\n- Filtre apenas colaboradores com `ativo = true` e cujo email não pertença ao domínio `@sqlarena.com`.\n- Ordene pelo identificador `id` em ordem ascendente.",
+      "schemaSql": "CREATE TABLE usuarios_sistema (\n    id SERIAL PRIMARY KEY,\n    nome VARCHAR(100) NOT NULL,\n    email VARCHAR(120) NOT NULL,\n    ativo BOOLEAN DEFAULT true\n);",
+      "sampleTables": [
+        {
+          "name": "usuarios_sistema",
+          "columns": [
+            "id",
+            "nome",
+            "email",
+            "ativo"
+          ],
+          "rows": [
+            {
+              "id": 1,
+              "nome": "  Gabriel Ramos ",
+              "email": "gabriel@gmail.com",
+              "ativo": true
+            },
+            {
+              "id": 2,
+              "nome": "Luciana Alves",
+              "email": "luciana@sqlarena.com",
+              "ativo": true
+            },
+            {
+              "id": 3,
+              "nome": "Vanessa Costa",
+              "email": "vanessa@yahoo.com.br",
+              "ativo": true
+            },
+            {
+              "id": 4,
+              "nome": "Renato Silveira",
+              "email": "renato@hotmail.com",
+              "ativo": false
+            }
+          ]
+        }
+      ],
+      "starterSql": "SELECT \n    id,\n    TRIM(nome) AS nome,\n    LOWER(TRIM(email)) AS email_formatado,\n    SUBSTRING(LOWER(TRIM(email)) FROM POSITION('@' IN email) + 1) AS dominio\nFROM usuarios_sistema\nWHERE email NOT LIKE '%@sqlarena.com' AND ativo = true\nORDER BY id ASC;",
+      "expectedColumns": [
+        "id",
+        "nome",
+        "email_formatado",
+        "dominio"
+      ]
+    },
+    {
+      "id": 18,
+      "title": "Classificação de Risco de Crédito com Expressão CASE",
+      "difficulty": "Fácil",
+      "categories": [
+        "Condicional",
+        "Filtragem"
+      ],
+      "category": "Condicional",
+      "status": "UNSOLVED",
+      "publishedStatus": "PUBLISHED",
+      "description": "Uma fintech precisa categorizar os clientes para concessão de limite de cartão de crédito.\n\nEscreva uma consulta com a instrução condicional `CASE` que classifique o risco do cliente:\n- `'ALTO'`: Se o cliente estiver com restrição cadastral (`negativado = true`) ou possuir score inferior a 500.\n- `'MÉDIO'`: Se o score estiver entre 500 e 749 (inclusive) e não for negativado.\n- `'BAIXO'`: Para todos os demais clientes (score igual ou maior que 750 sem restrição).\n\n**Regras:**\n- Ordene a listagem pelo score em ordem decrescente; em caso de empate, pelo nome do titular alfabeticamente.",
+      "schemaSql": "CREATE TABLE contas_credito (\n    id SERIAL PRIMARY KEY,\n    titular VARCHAR(100) NOT NULL,\n    score_serasa INT NOT NULL,\n    negativado BOOLEAN DEFAULT false\n);",
+      "sampleTables": [
+        {
+          "name": "contas_credito",
+          "columns": [
+            "id",
+            "titular",
+            "score_serasa",
+            "negativado"
+          ],
+          "rows": [
+            {
+              "id": 1,
+              "titular": "Roberta Mendes",
+              "score_serasa": 820,
+              "negativado": false
+            },
+            {
+              "id": 2,
+              "titular": "Danilo Cunha",
+              "score_serasa": 610,
+              "negativado": false
+            },
+            {
+              "id": 3,
+              "titular": "Sérgio Moraes",
+              "score_serasa": 430,
+              "negativado": false
+            },
+            {
+              "id": 4,
+              "titular": "Priscila Antunes",
+              "score_serasa": 790,
+              "negativado": true
+            }
+          ]
+        }
+      ],
+      "starterSql": "SELECT \n    id,\n    titular,\n    score_serasa,\n    CASE \n        WHEN negativado = true OR score_serasa < 500 THEN 'ALTO'\n        WHEN score_serasa BETWEEN 500 AND 749 THEN 'MÉDIO'\n        ELSE 'BAIXO'\n    END AS classificacao_risco\nFROM contas_credito\nORDER BY score_serasa DESC, titular ASC;",
+      "expectedColumns": [
+        "id",
+        "titular",
+        "score_serasa",
+        "classificacao_risco"
+      ]
+    },
+    {
+      "id": 19,
+      "title": "Produtos sem Saída no Trimestre usando EXCEPT",
+      "difficulty": "Médio",
+      "categories": [
+        "Conjuntos",
+        "Filtragem",
+        "Subconsultas"
+      ],
+      "category": "Conjuntos",
+      "status": "UNSOLVED",
+      "publishedStatus": "PUBLISHED",
+      "description": "A gestão de suprimentos precisa identificar quais produtos ativos do catálogo NÃO tiveram nenhuma saída registrada no trimestre atual.\n\nUtilize o operador relacional de conjuntos `EXCEPT` para subtrair os produtos vendidos do catálogo geral ativo.\n\n**Regras:**\n- Retorne apenas o código `sku` e o `nome_produto`.\n- Ordene o resultado final alfabeticamente pelo código `sku` em ordem ascendente.",
+      "schemaSql": "CREATE TABLE catalogo_geral (\n    sku VARCHAR(20) PRIMARY KEY,\n    nome_produto VARCHAR(100) NOT NULL,\n    ativo BOOLEAN DEFAULT true\n);\n\nCREATE TABLE vendas_trimestre (\n    id SERIAL PRIMARY KEY,\n    sku VARCHAR(20) NOT NULL REFERENCES catalogo_geral(sku),\n    quantidade INT NOT NULL\n);",
+      "sampleTables": [
+        {
+          "name": "catalogo_geral",
+          "columns": [
+            "sku",
+            "nome_produto",
+            "ativo"
+          ],
+          "rows": [
+            {
+              "sku": "PROD-001",
+              "nome_produto": "Mouse Óptico USB",
+              "ativo": true
+            },
+            {
+              "sku": "PROD-002",
+              "nome_produto": "Webcam Full HD",
+              "ativo": true
+            },
+            {
+              "sku": "PROD-003",
+              "nome_produto": "Suporte Ergonômico",
+              "ativo": true
+            },
+            {
+              "sku": "PROD-004",
+              "nome_produto": "Hub USB-C 7 portas",
+              "ativo": true
+            }
+          ]
+        },
+        {
+          "name": "vendas_trimestre",
+          "columns": [
+            "id",
+            "sku",
+            "quantidade"
+          ],
+          "rows": [
+            {
+              "id": 1,
+              "sku": "PROD-001",
+              "quantidade": 15
+            },
+            {
+              "id": 2,
+              "sku": "PROD-003",
+              "quantidade": 8
+            }
+          ]
+        }
+      ],
+      "starterSql": "SELECT sku, nome_produto\nFROM catalogo_geral\nWHERE ativo = true\nEXCEPT\nSELECT cg.sku, cg.nome_produto\nFROM catalogo_geral cg\nJOIN vendas_trimestre vt ON vt.sku = cg.sku\nORDER BY sku ASC;",
+      "expectedColumns": [
+        "sku",
+        "nome_produto"
+      ]
+    },
+    {
+      "id": 20,
+      "title": "Tempo Médio de Resolução de Chamados em Horas",
+      "difficulty": "Médio",
+      "categories": [
+        "Agrupamento",
+        "Datas",
+        "Filtragem",
+        "Funções"
+      ],
+      "category": "Datas",
+      "status": "UNSOLVED",
+      "publishedStatus": "PUBLISHED",
+      "description": "Calcule a métrica de SLA da central de atendimento técnico ao cliente.\n\nEscreva uma consulta SQL que calcule para cada categoria de suporte a **quantidade total de chamados resolvidos** e o **tempo médio de atendimento em horas** (diferença entre `data_fechamento` e `data_abertura`), arredondado para 2 casas decimais.\n\n**Regras:**\n- No PostgreSQL, use `AVG(EXTRACT(EPOCH FROM (data_fechamento - data_abertura)) / 3600)` para a média de horas.\n- Considere apenas chamados com `status = 'RESOLVIDO'` e `data_fechamento IS NOT NULL`.\n- Ordene do menor tempo médio para o maior; havendo empate, pelo nome da categoria alfabeticamente.",
+      "schemaSql": "CREATE TABLE tickets_suporte (\n    id SERIAL PRIMARY KEY,\n    categoria VARCHAR(50) NOT NULL,\n    data_abertura TIMESTAMP NOT NULL,\n    data_fechamento TIMESTAMP,\n    status VARCHAR(20) NOT NULL\n);",
+      "sampleTables": [
+        {
+          "name": "tickets_suporte",
+          "columns": [
+            "id",
+            "categoria",
+            "data_abertura",
+            "data_fechamento",
+            "status"
+          ],
+          "rows": [
+            {
+              "id": 1,
+              "categoria": "Acesso e Senha",
+              "data_abertura": "2026-03-01 08:00:00",
+              "data_fechamento": "2026-03-01 10:30:00",
+              "status": "RESOLVIDO"
+            },
+            {
+              "id": 2,
+              "categoria": "Acesso e Senha",
+              "data_abertura": "2026-03-01 09:00:00",
+              "data_fechamento": "2026-03-01 10:00:00",
+              "status": "RESOLVIDO"
+            },
+            {
+              "id": 3,
+              "categoria": "Cobrança",
+              "data_abertura": "2026-03-01 10:00:00",
+              "data_fechamento": "2026-03-02 12:00:00",
+              "status": "RESOLVIDO"
+            },
+            {
+              "id": 4,
+              "categoria": "Cobrança",
+              "data_abertura": "2026-03-02 14:00:00",
+              "data_fechamento": null,
+              "status": "EM_ANDAMENTO"
+            }
+          ]
+        }
+      ],
+      "starterSql": "SELECT \n    categoria,\n    COUNT(id) AS total_resolvidos,\n    ROUND(AVG(EXTRACT(EPOCH FROM (data_fechamento - data_abertura)) / 3600)::NUMERIC, 2) AS tempo_medio_horas\nFROM tickets_suporte\nWHERE status = 'RESOLVIDO' AND data_fechamento IS NOT NULL\nGROUP BY categoria\nORDER BY tempo_medio_horas ASC, categoria ASC;",
+      "expectedColumns": [
+        "categoria",
+        "total_resolvidos",
+        "tempo_medio_horas"
+      ]
+    },
+    {
+      "id": 21,
+      "title": "Desempenho Global de Cursos Online (5 Categorias)",
+      "difficulty": "Difícil",
+      "categories": [
+        "Agrupamento",
+        "Condicional",
+        "Filtragem",
+        "Funções",
+        "JOINs"
+      ],
+      "category": "Agrupamento",
+      "status": "UNSOLVED",
+      "publishedStatus": "PUBLISHED",
+      "description": "A diretoria de uma plataforma de educação a distância quer um painel analítico abrangente de cada curso ofertado.\n\nEscreva uma consulta que consolide para cada curso:\n1. **total_matriculas**: Quantidade total de inscrições.\n2. **receita_total**: Somatório dos pagamentos confirmados (`m.pago = true`), multiplicando pelo preço do curso.\n3. **taxa_conclusao_pct**: Porcentagem de alunos que concluíram (`m.concluido = true`) sobre o total de matrículas, com 1 casa decimal.\n4. **status_performance**: \n   - `'Top Performer'`: Mais de 2 matrículas e receita igual ou superior a R$ 1.000,00.\n   - `'Desempenho Regular'`: Ao menos 1 matrícula.\n   - `'Sem Vendas'`: Nenhuma matrícula.\n\n**Regras:**\n- Utilize `LEFT JOIN` para garantir que cursos sem matrícula também sejam exibidos no relatório com valores zerados.\n- Ordene pela receita total decrescente, total de matrículas decrescente e pelo título do curso alfabeticamente.",
+      "schemaSql": "CREATE TABLE cursos (\n    id SERIAL PRIMARY KEY,\n    titulo VARCHAR(100) NOT NULL,\n    preco NUMERIC(10,2) NOT NULL\n);\n\nCREATE TABLE matriculas (\n    id SERIAL PRIMARY KEY,\n    curso_id INT NOT NULL REFERENCES cursos(id),\n    aluno_id INT NOT NULL,\n    pago BOOLEAN DEFAULT true,\n    concluido BOOLEAN DEFAULT false\n);",
+      "sampleTables": [
+        {
+          "name": "cursos",
+          "columns": [
+            "id",
+            "titulo",
+            "preco"
+          ],
+          "rows": [
+            {
+              "id": 1,
+              "titulo": "PostgreSQL do Básico ao Avançado",
+              "preco": "450.00"
+            },
+            {
+              "id": 2,
+              "titulo": "Modelagem Dimensional e Star Schema",
+              "preco": "550.00"
+            },
+            {
+              "id": 3,
+              "titulo": "Otimização de Queries e EXPLAIN ANALYZE",
+              "preco": "600.00"
+            }
+          ]
+        },
+        {
+          "name": "matriculas",
+          "columns": [
+            "id",
+            "curso_id",
+            "aluno_id",
+            "pago",
+            "concluido"
+          ],
+          "rows": [
+            {
+              "id": 1,
+              "curso_id": 1,
+              "aluno_id": 10,
+              "pago": true,
+              "concluido": true
+            },
+            {
+              "id": 2,
+              "curso_id": 1,
+              "aluno_id": 11,
+              "pago": true,
+              "concluido": true
+            },
+            {
+              "id": 3,
+              "curso_id": 1,
+              "aluno_id": 12,
+              "pago": true,
+              "concluido": false
+            },
+            {
+              "id": 4,
+              "curso_id": 2,
+              "aluno_id": 10,
+              "pago": true,
+              "concluido": false
+            }
+          ]
+        }
+      ],
+      "starterSql": "SELECT \n    c.id AS curso_id,\n    c.titulo,\n    COUNT(m.id) AS total_matriculas,\n    COALESCE(SUM(CASE WHEN m.pago = true THEN c.preco ELSE 0 END), 0) AS receita_total,\n    ROUND(\n        (COUNT(CASE WHEN m.concluido = true THEN 1 END)::NUMERIC / NULLIF(COUNT(m.id), 0)) * 100, \n        1\n    ) AS taxa_conclusao_pct,\n    CASE \n        WHEN COUNT(m.id) >= 2 AND COALESCE(SUM(CASE WHEN m.pago = true THEN c.preco ELSE 0 END), 0) >= 1000.00 THEN 'Top Performer'\n        WHEN COUNT(m.id) >= 1 THEN 'Desempenho Regular'\n        ELSE 'Sem Vendas'\n    END AS status_performance\nFROM cursos c\nLEFT JOIN matriculas m ON m.curso_id = c.id\nGROUP BY c.id, c.titulo\nORDER BY receita_total DESC, total_matriculas DESC, c.titulo ASC;",
+      "expectedColumns": [
+        "curso_id",
+        "titulo",
+        "total_matriculas",
+        "receita_total",
+        "taxa_conclusao_pct",
+        "status_performance"
+      ]
+    }
+  ],
+  "accounts": {
+    "aluno@sqlarena.com": {
+      "id": "user_101",
+      "name": "Gustavo Santos",
+      "email": "aluno@sqlarena.com",
+      "role": "STUDENT",
+      "score": 180,
+      "solvedCount": 5,
+      "streakDays": 4
+    },
+    "instrutor@sqlarena.com": {
+      "id": "user_001",
+      "name": "Carlos Silva",
+      "email": "instrutor@sqlarena.com",
+      "role": "INSTRUCTOR",
+      "score": 350,
+      "solvedCount": 8,
+      "streakDays": 12
+    }
+  }
+}
