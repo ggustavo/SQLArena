@@ -80,6 +80,15 @@ def test_worker_process_message_end_to_end():
     assert status_data["executionTimeMs"] > 0
     assert len(status_data["rows"]) == 3
 
+    # Limpeza pós-teste
+    from app.dynamodb.dynamo_manager import DynamoDBManager
+    dynamo = DynamoDBManager()
+    try:
+        dynamo.table.delete_item(Key={"submission_id": sub_id})
+    except Exception:
+        pass
+    redis_client.delete_submission(sub_id)
+
 def main():
     """Simulação manual de envio para validação ad-hoc."""
     manager = SQSQueueManager()

@@ -69,22 +69,34 @@ def test_submission_rate_limit():
     token = login_res.json()["token"]
     headers = {"Authorization": f"Bearer {token}"}
 
-    # 1ª submissão: deve ser aceita (202)
-    sub_res_1 = client.post("/api/submissions", headers=headers, json={
-        "questionId": 1,
-        "query": "SELECT * FROM clientes;",
-        "questionTitle": "Top 5 Clientes com Maior Faturamento"
-    })
-    assert sub_res_1.status_code == 202
-    sub_data = sub_res_1.json()
-    assert "submissionId" in sub_data
-    assert sub_data["status"] == "PROCESSING"
+    from unittest.mock import patch
+    with patch("app.api.submissions.sqs_manager.send_message"):
+        # 1ª submissão: deve ser aceita (202)
+        sub_res_1 = client.post("/api/submissions", headers=headers, json={
+            "questionId": 1,
+            "query": "SELECT * FROM clientes;",
+            "questionTitle": "Top 5 Clientes com Maior Faturamento"
+        })
+        assert sub_res_1.status_code == 202
+        sub_data = sub_res_1.json()
+        assert "submissionId" in sub_data
+        assert sub_data["status"] == "PROCESSING"
 
-    # 2ª submissão imediata: deve ser bloqueada por Rate Limit de 5 segundos (429)
-    sub_res_2 = client.post("/api/submissions", headers=headers, json={
-        "questionId": 1,
-        "query": "SELECT * FROM clientes;",
-        "questionTitle": "Top 5 Clientes com Maior Faturamento"
-    })
-    assert sub_res_2.status_code == 429
-    assert "Rate limit" in sub_res_2.json()["detail"]
+        # 2ª submissão imediata: deve ser bloqueada por Rate Limit de 5 segundos (429)
+        sub_res_2 = client.post("/api/submissions", headers=headers, json={
+            "questionId": 1,
+            "query": "SELECT * FROM clientes;",
+            "questionTitle": "Top 5 Clientes com Maior Faturamento"
+        })
+        assert sub_res_2.status_code == 429
+        assert "Rate limit" in sub_res_2.json()["detail"]
+
+    # Limpeza pós-teste
+    from app.dynamodb.dynamo_manager import DynamoDBManager
+    from app.cache.redis_client import redis_client
+    dynamo = DynamoDBManager()
+    try:
+        dynamo.table.delete_item(Key={"submission_id": sub_data["submissionId"]})
+    except Exception:
+        pass
+    redis_client.delete_submission(sub_data["submissionId"])

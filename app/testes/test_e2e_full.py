@@ -109,6 +109,14 @@ def test_full_student_frontend_flow():
     history = hist_resp.json()
     assert any(h["submissionId"] == submission_id for h in history)
 
+    # Teardown: Remove a submissão de teste para nunca poluir o ambiente real do aluno
+    dynamo = DynamoDBManager()
+    try:
+        dynamo.table.delete_item(Key={"submission_id": submission_id})
+    except Exception:
+        pass
+    redis_client.delete_submission(submission_id)
+
 def test_full_instructor_frontend_flow():
     """
     Simula o fluxo do instrutor:

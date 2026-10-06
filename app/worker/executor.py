@@ -85,12 +85,28 @@ class SandboxExecutor:
         return hashlib.sha256(canonical_str.encode("utf-8")).hexdigest()
 
     def get_or_compute_official_hash(self, question_id: int) -> str:
-        """Recupera o hash oficial do gabarito no Redis ou computa executando o answer.sql."""
+        """Recupera o hash oficial do gabarito no Redis, ou no RDS (campo expected_hash), ou computa executando o answer.sql."""
+        # 1. Tenta no Redis (ultrarrápido em memória)
         cached_hash = redis_client.get_answer_hash(question_id)
         if cached_hash:
             return cached_hash
 
-        # Executa o answer.sql para gerar o gabarito
+        # 2. Tenta no PostgreSQL RDS (campo persistido expected_hash)
+        conn = self._get_connection()
+        try:
+            with conn.cursor() as cur:
+                cur.execute("SELECT expected_hash FROM questions WHERE id = %s;", (question_id,))
+                row = cur.fetchone()
+                if row and row[0]:
+                    official_hash = row[0]
+                    redis_client.set_answer_hash(question_id, official_hash)
+                    return official_hash
+        except Exception as e:
+            logger.warning(f"Não foi possível consultar expected_hash da questão #{question_id} no RDS: {e}")
+        finally:
+            conn.close()
+
+        # 3. Fallback: Executa o answer.sql para gerar o gabarito
         self.ensure_schema_bootstrapped(question_id)
         schema_name = f"pergunta_{question_id}"
         files = self.s3.get_question_sql_files(question_id)

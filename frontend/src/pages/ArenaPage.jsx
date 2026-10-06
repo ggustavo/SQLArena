@@ -4,15 +4,11 @@ import SqlEditor from '../components/SqlEditor';
 import RelationalDiagram from '../components/RelationalDiagram';
 import SampleDataAccordion from '../components/SampleDataAccordion';
 import ResultDrawer from '../components/ResultDrawer';
-import { submitQuery, checkSubmissionStatus, getLastSubmittedSql } from '../services/submissionService';
+import { submitQuery, checkSubmissionStatus, fetchLastSubmittedSql } from '../services/submissionService';
 import { getCategoryMeta } from '../utils/categoryMeta';
 
 export default function ArenaPage({ question, onBack, user, onAddPoints, initialSql }) {
-  const [code, setCode] = useState(() => {
-    if (initialSql) return initialSql;
-    const lastSubmitted = getLastSubmittedSql(question?.id);
-    return lastSubmitted || '';
-  });
+  const [code, setCode] = useState(() => initialSql || '');
   const [isRunning, setIsRunning] = useState(false);
   const [result, setResult] = useState(null);
   const [errorMessage, setErrorMessage] = useState(null);
@@ -23,12 +19,33 @@ export default function ArenaPage({ question, onBack, user, onAddPoints, initial
   const [collapseSample, setCollapseSample] = useState(false);
 
   useEffect(() => {
+    let isMounted = true;
     if (initialSql) {
       setCode(initialSql);
-    } else {
-      const lastSubmitted = getLastSubmittedSql(question?.id);
-      setCode(lastSubmitted || '');
+      return;
     }
+
+    // Inicializa estritamente em branco para a nova questão
+    setCode('');
+
+    async function loadLastCode() {
+      try {
+        const remoteQuery = await fetchLastSubmittedSql(question?.id);
+        if (isMounted) {
+          setCode(remoteQuery || '');
+        }
+      } catch {
+        if (isMounted) setCode('');
+      }
+    }
+
+    if (question?.id) {
+      loadLastCode();
+    }
+
+    return () => {
+      isMounted = false;
+    };
   }, [question?.id, initialSql]);
 
   const handleRunQuery = async () => {

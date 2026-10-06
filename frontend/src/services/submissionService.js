@@ -6,119 +6,17 @@ const RATE_LIMIT_MS = 5000; // 5 segundos conforme Requisito 8
 
 const STORAGE_KEY = 'sqlarena_submissions_history';
 
-// Dados iniciais realistas para o histórico de submissões
-const INITIAL_MOCK_HISTORY = [
-  {
-    submissionId: 'sub_init_1',
-    questionId: 1,
-    questionTitle: 'Top 5 Clientes com Maior Faturamento',
-    difficulty: 'Médio',
-    userId: 'user_101',
-    query: `SELECT c.nome, SUM(p.valor_total) AS faturamento_total
-FROM clientes c
-JOIN pedidos p ON p.cliente_id = c.id
-WHERE p.status = 'FINALIZADO'
-GROUP BY c.id, c.nome
-ORDER BY faturamento_total DESC, c.nome ASC
-LIMIT 5;`,
-    status: 'DONE',
-    outcome: 'SUCCESS',
-    errorMessage: null,
-    columns: ['nome', 'faturamento_total'],
-    rows: [
-      { nome: 'Mariana Souza Lima', faturamento_total: '3100.20' },
-      { nome: 'Ana Beatriz Rocha', faturamento_total: '2140.50' },
-      { nome: 'Carlos Eduardo Mendes', faturamento_total: '450.00' },
-    ],
-    executionTimeMs: 42,
-    pointsAwarded: 10,
-    strictModeHashMatched: true,
-    createdAt: new Date(Date.now() - 1000 * 60 * 8).toISOString(), // há 8 minutos
-    finishedAt: new Date(Date.now() - 1000 * 60 * 8 + 42).toISOString(),
-  },
-  {
-    submissionId: 'sub_init_2',
-    questionId: 2,
-    questionTitle: 'Total de Pedidos por Mês',
-    difficulty: 'Médio',
-    userId: 'user_101',
-    query: `SELECT DATE_TRUNC('month', data_pedido) AS mes, COUNT(id) AS total_pedidos
-FROM pedidos
-GROUP BY mes;`,
-    status: 'DONE',
-    outcome: 'WRONG_ANSWER',
-    errorMessage: 'Resultado divergente: A consulta retornou 12 linhas sem a cláusula ORDER BY exigida pelo gabarito estrito.',
-    columns: ['mes', 'total_pedidos'],
-    rows: [
-      { mes: '2024-03-01 00:00:00', total_pedidos: 14 },
-      { mes: '2024-01-01 00:00:00', total_pedidos: 22 },
-      { mes: '2024-02-01 00:00:00', total_pedidos: 18 },
-    ],
-    executionTimeMs: 65,
-    pointsAwarded: 0,
-    strictModeHashMatched: false,
-    createdAt: new Date(Date.now() - 1000 * 60 * 35).toISOString(), // há 35 minutos
-    finishedAt: new Date(Date.now() - 1000 * 60 * 35 + 65).toISOString(),
-  },
-  {
-    submissionId: 'sub_init_3',
-    questionId: 3,
-    questionTitle: 'Média Salarial por Departamento',
-    difficulty: 'Difícil',
-    userId: 'user_101',
-    query: `SELECT d.nome, AVG(f.salario_base) AS media_salario
-FROM departamentos d
-JOIN funcionarios f ON f.dept_id = d.id
-WHERE f.ativo = true
-GROUP BY d.nome;`,
-    status: 'DONE',
-    outcome: 'ERROR',
-    errorMessage: 'psql: error: column "f.dept_id" does not exist (LINE 3: JOIN funcionarios f ON f.dept_id = d.id)\nHINT: Perhaps you meant to reference the column "f.departamento_id".',
-    columns: [],
-    rows: [],
-    executionTimeMs: 18,
-    pointsAwarded: 0,
-    strictModeHashMatched: false,
-    createdAt: new Date(Date.now() - 1000 * 60 * 75).toISOString(), // há 1h 15m
-    finishedAt: new Date(Date.now() - 1000 * 60 * 75 + 18).toISOString(),
-  },
-  {
-    submissionId: 'sub_init_4',
-    questionId: 1,
-    questionTitle: 'Top 5 Clientes com Maior Faturamento',
-    difficulty: 'Médio',
-    userId: 'user_101',
-    query: `SELECT c.nome, p.valor_total
-FROM clientes c
-JOIN pedidos p ON p.cliente_id = c.id;`,
-    status: 'DONE',
-    outcome: 'WRONG_ANSWER',
-    errorMessage: 'Resultado divergente: Hash de resultado não coincide com o gabarito. Faltam agregações GROUP BY e filtro de status FINALIZADO.',
-    columns: ['nome', 'valor_total'],
-    rows: [
-      { nome: 'Carlos Eduardo Mendes', valor_total: '150.00' },
-      { nome: 'Carlos Eduardo Mendes', valor_total: '300.00' },
-      { nome: 'Ana Beatriz Rocha', valor_total: '2140.50' },
-    ],
-    executionTimeMs: 38,
-    pointsAwarded: 0,
-    strictModeHashMatched: false,
-    createdAt: new Date(Date.now() - 1000 * 60 * 120).toISOString(), // há 2 horas
-    finishedAt: new Date(Date.now() - 1000 * 60 * 120 + 38).toISOString(),
-  },
-];
+// Remove imediatamente qualquer resquício de submissões mockadas antigas armazenadas no navegador
+if (typeof window !== 'undefined') {
+  try {
+    localStorage.removeItem(STORAGE_KEY);
+  } catch {
+    // ignore
+  }
+}
 
 function getStoredHistory() {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(INITIAL_MOCK_HISTORY));
-      return [...INITIAL_MOCK_HISTORY];
-    }
-    return JSON.parse(raw);
-  } catch {
-    return [...INITIAL_MOCK_HISTORY];
-  }
+  return [];
 }
 
 function saveStoredHistory(historyList) {
@@ -395,18 +293,23 @@ export async function checkSubmissionStatus(submissionId) {
  * Retorna o SQL da última submissão enviada pelo usuário para uma questão específica,
  * ou null caso o usuário ainda não tenha respondido essa questão.
  */
-export function getLastSubmittedSql(questionId) {
-  if (!questionId) return null;
+export function getLastSubmittedSql() {
+  return null;
+}
+
+/**
+ * Busca de forma assíncrona a última consulta SQL submetida pelo aluno via API / DynamoDB.
+ * Se nenhuma consulta foi submetida, retorna rigorosamente null.
+ */
+export async function fetchLastSubmittedSql(questionId) {
+  if (!questionId || USE_MOCK) return null;
   try {
-    const history = getStoredHistory();
-    // Como getStoredHistory() ordena as mais recentes no topo (unshift),
-    // a primeira correspondência é a última submissão do aluno
-    const match = history.find(
-      (sub) => Number(sub.questionId) === Number(questionId) && typeof sub.query === 'string' && sub.query.trim().length > 0
-    );
-    return match ? match.query : null;
-  } catch (err) {
-    console.error('Erro ao buscar última submissão da questão:', err);
+    const response = await api.get('/submissions/last', {
+      params: { question_id: questionId }
+    });
+    const q = response.data?.query;
+    return typeof q === 'string' && q.trim().length > 0 ? q : null;
+  } catch {
     return null;
   }
 }

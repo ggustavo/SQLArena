@@ -24,7 +24,7 @@ class User(Base):
     role = Column(String(20), nullable=False, default="STUDENT")  # STUDENT, INSTRUCTOR
     score = Column(Integer, default=0)
     solved_count = Column(Integer, default=0)
-    streak_days = Column(Integer, default=1)
+    streak_days = Column(Integer, default=0)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     solved_questions = relationship("UserSolvedQuestion", back_populates="user", cascade="all, delete-orphan")
@@ -52,6 +52,7 @@ class Question(Base):
     schema_sql = Column(Text, nullable=True)
     sample_tables = Column(JSON, nullable=True)
     expected_columns = Column(JSON, nullable=True)
+    expected_hash = Column(String(64), nullable=True)
     created_by = Column(String(50), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())

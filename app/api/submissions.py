@@ -251,3 +251,26 @@ def get_recent(
         return formatted[:limit]
     except Exception:
         return []
+
+@router.get("/last")
+def get_last_submission(
+    question_id: int,
+    user: User = Depends(get_current_user)
+):
+    """
+    Retorna a última consulta SQL submetida pelo aluno para uma questão específica,
+    permitindo restaurar o editor SQL exatamente como ele deixou.
+    """
+    try:
+        submissions = dynamo_manager.get_student_submissions(user.id, limit=50)
+        q_subs = [
+            s for s in submissions 
+            if str(s.get("question_id") or s.get("questionId")) == str(question_id)
+        ]
+        if not q_subs:
+            return {"query": None}
+        q_subs.sort(key=lambda x: str(x.get("created_at") or x.get("createdAt") or ""), reverse=True)
+        last_query = q_subs[0].get("query", "")
+        return {"query": last_query if last_query else None}
+    except Exception as e:
+        return {"query": None}

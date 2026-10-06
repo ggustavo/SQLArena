@@ -1,6 +1,6 @@
 import json
 import logging
-from typing import Optional, Tuple, Dict, Any
+from typing import Optional, Tuple, Dict, Any, List
 import redis
 from app.config import settings
 
@@ -82,5 +82,68 @@ class RedisClient:
         except Exception as e:
             logger.error(f"Erro ao ler status da submissão do Redis: {e}")
             return None
+
+    def delete_submission(self, submission_id: str) -> bool:
+        """Remove o cache de status de uma submissão."""
+        key = f"submission:{submission_id}:status"
+        try:
+            self.client.delete(key)
+            return True
+        except Exception:
+            return False
+
+    def set_cached_questions(self, role: str, data: List[Dict[str, Any]], ttl: int = 300) -> bool:
+        """Armazena a lista de questões no cache Redis (TTL 300s)."""
+        key = f"questions:list:{role.lower()}"
+        try:
+            self.client.set(key, json.dumps(data), ex=ttl)
+            return True
+        except Exception as e:
+            logger.error(f"Erro ao salvar cache de questões no Redis: {e}")
+            return False
+
+    def get_cached_questions(self, role: str) -> Optional[List[Dict[str, Any]]]:
+        """Recupera a lista de questões em cache no Redis."""
+        key = f"questions:list:{role.lower()}"
+        try:
+            val = self.client.get(key)
+            return json.loads(val) if val else None
+        except Exception as e:
+            logger.error(f"Erro ao ler cache de questões do Redis: {e}")
+            return None
+
+    def set_cached_question(self, question_id: int, data: Dict[str, Any], ttl: int = 300) -> bool:
+        """Armazena os detalhes de uma questão no cache Redis (TTL 300s)."""
+        key = f"question:{question_id}:details"
+        try:
+            self.client.set(key, json.dumps(data), ex=ttl)
+            return True
+        except Exception as e:
+            logger.error(f"Erro ao salvar cache da questão #{question_id} no Redis: {e}")
+            return False
+
+    def get_cached_question(self, question_id: int) -> Optional[Dict[str, Any]]:
+        """Recupera os detalhes de uma questão em cache no Redis."""
+        key = f"question:{question_id}:details"
+        try:
+            val = self.client.get(key)
+            return json.loads(val) if val else None
+        except Exception as e:
+            logger.error(f"Erro ao ler cache da questão #{question_id} do Redis: {e}")
+            return None
+
+    def invalidate_questions_cache(self, question_id: Optional[int] = None) -> bool:
+        """Invalida os caches de lista e específicos de questões no Redis."""
+        try:
+            keys_to_delete = ["questions:list:student", "questions:list:instructor", "questions:list:admin"]
+            if question_id is not None:
+                keys_to_delete.append(f"question:{question_id}:details")
+                keys_to_delete.append(f"question:{question_id}:answer_hash")
+            self.client.delete(*keys_to_delete)
+            logger.info(f"[Redis] Cache de questões invalidado com sucesso. Chaves: {keys_to_delete}")
+            return True
+        except Exception as e:
+            logger.error(f"Erro ao invalidar cache de questões no Redis: {e}")
+            return False
 
 redis_client = RedisClient()

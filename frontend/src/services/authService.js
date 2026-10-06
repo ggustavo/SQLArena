@@ -19,7 +19,7 @@ export async function login(email, password) {
       role: 'STUDENT',
       score: 0,
       solvedCount: 0,
-      streakDays: 1,
+      streakDays: 0,
     };
 
     const token = 'jwt-token-sqlarena-' + Date.now();

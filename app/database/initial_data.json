@@ -458,6 +458,23 @@
       "schemaSql": "CREATE TABLE clientes_cohort (\n    id SERIAL PRIMARY KEY,\n    nome VARCHAR(100) NOT NULL\n);\n\nCREATE TABLE pedidos_cohort (\n    id SERIAL PRIMARY KEY,\n    cliente_id INT REFERENCES clientes_cohort(id),\n    valor NUMERIC(10,2) NOT NULL,\n    status VARCHAR(20) NOT NULL,\n    data_pedido TIMESTAMP NOT NULL\n);",
       "sampleTables": [
         {
+          "name": "clientes_cohort",
+          "columns": [
+            "id",
+            "nome"
+          ],
+          "rows": [
+            {
+              "id": 1,
+              "nome": "Carlos Drummond"
+            },
+            {
+              "id": 2,
+              "nome": "Clarice Lispector"
+            }
+          ]
+        },
+        {
           "name": "pedidos_cohort",
           "columns": [
             "id",
@@ -532,6 +549,47 @@
               "nome": "Camila Vendas"
             }
           ]
+        },
+        {
+          "name": "vendas_trimestre",
+          "columns": [
+            "id",
+            "vendedor_id",
+            "valor",
+            "data_venda"
+          ],
+          "rows": [
+            {
+              "id": 1,
+              "vendedor_id": 1,
+              "valor": "5000.00",
+              "data_venda": "2026-02-15"
+            },
+            {
+              "id": 2,
+              "vendedor_id": 1,
+              "valor": "3000.00",
+              "data_venda": "2026-03-20"
+            },
+            {
+              "id": 3,
+              "vendedor_id": 2,
+              "valor": "9000.00",
+              "data_venda": "2026-02-10"
+            },
+            {
+              "id": 4,
+              "vendedor_id": 1,
+              "valor": "4000.00",
+              "data_venda": "2026-05-18"
+            },
+            {
+              "id": 5,
+              "vendedor_id": 2,
+              "valor": "6000.00",
+              "data_venda": "2026-06-01"
+            }
+          ]
         }
       ],
       "starterSql": "SELECT \n    v.nome,\n    EXTRACT(QUARTER FROM vt.data_venda) AS trimestre,\n    SUM(vt.valor) AS total_vendas,\n    DENSE_RANK() OVER (\n        PARTITION BY EXTRACT(QUARTER FROM vt.data_venda) \n        ORDER BY SUM(vt.valor) DESC\n    ) AS posicao,\n    CASE \n        WHEN DENSE_RANK() OVER (PARTITION BY EXTRACT(QUARTER FROM vt.data_venda) ORDER BY SUM(vt.valor) DESC) = 1 THEN '15% Bonus'\n        WHEN DENSE_RANK() OVER (PARTITION BY EXTRACT(QUARTER FROM vt.data_venda) ORDER BY SUM(vt.valor) DESC) = 2 THEN '10% Bonus'\n        ELSE '5% Bonus'\n    END AS faixa_bonus\nFROM vendedores v\nJOIN vendas_trimestre vt ON vt.vendedor_id = v.id\nGROUP BY v.id, v.nome, trimestre\nORDER BY trimestre ASC, posicao ASC;",
@@ -580,6 +638,35 @@
               "nome": "Renata Abreu",
               "email": "renata@parceiro.com",
               "cidade": "Curitiba"
+            }
+          ]
+        },
+        {
+          "name": "pedidos_vip",
+          "columns": [
+            "id",
+            "cliente_id",
+            "valor",
+            "data_pedido"
+          ],
+          "rows": [
+            {
+              "id": 1,
+              "cliente_id": 1,
+              "valor": "800.00",
+              "data_pedido": "2026-03-10"
+            },
+            {
+              "id": 2,
+              "cliente_id": 2,
+              "valor": "1200.00",
+              "data_pedido": "2026-04-15"
+            },
+            {
+              "id": 3,
+              "cliente_id": 1,
+              "valor": "300.00",
+              "data_pedido": "2026-01-20"
             }
           ]
         }
@@ -631,6 +718,31 @@
               "preco": "89.00"
             }
           ]
+        },
+        {
+          "name": "compras_itens",
+          "columns": [
+            "id",
+            "item_id",
+            "quantidade"
+          ],
+          "rows": [
+            {
+              "id": 1,
+              "item_id": 1,
+              "quantidade": 15
+            },
+            {
+              "id": 2,
+              "item_id": 1,
+              "quantidade": 10
+            },
+            {
+              "id": 3,
+              "item_id": 2,
+              "quantidade": 50
+            }
+          ]
         }
       ],
       "starterSql": "(SELECT \n    ci.nome, \n    'Sem Giro' AS categoria_status, \n    0 AS total_unidades\nFROM catalogo_itens ci\nLEFT JOIN compras_itens c ON c.item_id = ci.id\nWHERE c.id IS NULL)\nUNION ALL\n(SELECT \n    ci.nome, \n    'Top Vendas' AS categoria_status, \n    SUM(c.quantidade) AS total_unidades\nFROM catalogo_itens ci\nJOIN compras_itens c ON c.item_id = ci.id\nGROUP BY ci.id, ci.nome\nORDER BY total_unidades DESC\nLIMIT 3)\nORDER BY categoria_status ASC, nome ASC;",
@@ -672,6 +784,31 @@
             {
               "id": 3,
               "cidade": "Campinas"
+            }
+          ]
+        },
+        {
+          "name": "entregas",
+          "columns": [
+            "id",
+            "cliente_id",
+            "status"
+          ],
+          "rows": [
+            {
+              "id": 1,
+              "cliente_id": 1,
+              "status": "ENTREGUE"
+            },
+            {
+              "id": 2,
+              "cliente_id": 2,
+              "status": "ENTREGUE"
+            },
+            {
+              "id": 3,
+              "cliente_id": 3,
+              "status": "CANCELADO"
             }
           ]
         }

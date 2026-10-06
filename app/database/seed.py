@@ -22,6 +22,8 @@ from app.cache.redis_client import redis_client
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("DatabaseSeed")
 
+from app.database.validator import QuestionValidator
+
 PREDEFINED_CATEGORIES = [
     {"name": "Agrupamento", "slug": "agrupamento", "description": "GROUP BY, HAVING e funções de agregação (SUM, AVG, COUNT)"},
     {"name": "Condicional", "slug": "condicional", "description": "Expressões condicionais: CASE WHEN, COALESCE, NULLIF"},
@@ -87,6 +89,13 @@ def seed_database():
 
     db: Session = SessionLocal()
     try:
+        # Garante coluna expected_hash caso a tabela já existisse
+        try:
+            db.execute(text("ALTER TABLE questions ADD COLUMN IF NOT EXISTS expected_hash VARCHAR(64);"))
+            db.commit()
+        except Exception:
+            db.rollback()
+
         # 3. Categorias pré-definidas
         cat_map = {}
         for cat_data in PREDEFINED_CATEGORIES:
@@ -103,7 +112,7 @@ def seed_database():
         db.commit()
         logger.info(f"[✓] {len(cat_map)} categorias cadastradas/verificadas.")
 
-        # 4. Usuários Iniciais
+        # 4. Usuários Iniciais: TODOS começam com score 0, sem questões resolvidas
         users_to_seed = [
             {
                 "id": "user_101",
@@ -111,9 +120,9 @@ def seed_database():
                 "email": "aluno@sqlarena.com",
                 "password": "123456",
                 "role": "STUDENT",
-                "score": 180,
-                "streak_days": 4,
-                "solved_count": 1
+                "score": 0,
+                "streak_days": 0,
+                "solved_count": 0
             },
             {
                 "id": "user_001",
@@ -121,9 +130,9 @@ def seed_database():
                 "email": "instrutor@sqlarena.com",
                 "password": "123456",
                 "role": "INSTRUCTOR",
-                "score": 350,
-                "streak_days": 12,
-                "solved_count": 8
+                "score": 0,
+                "streak_days": 0,
+                "solved_count": 0
             }
         ]
         for u_data in users_to_seed:
@@ -140,10 +149,20 @@ def seed_database():
                     solved_count=u_data["solved_count"]
                 )
                 db.add(user)
+            else:
+                user.score = 0
+                user.streak_days = 0
+                user.solved_count = 0
         db.commit()
-        logger.info("[✓] Usuários iniciais cadastrados/verificados.")
+        logger.info("[✓] Usuários iniciais cadastrados/zerados com sucesso.")
 
-        # 5. Carrega as 21 questões de initial_data.json
+        # Remove qualquer questão resolvida preliminarmente
+        deleted_solved = db.query(UserSolvedQuestion).delete()
+        db.commit()
+        if deleted_solved:
+            logger.info(f"[✓] Removidas {deleted_solved} resoluções mockadas de usuários.")
+
+        # 5. Validação dinâmica e povoamento das 21 questões de initial_data.json
         json_path = Path(__file__).resolve().parent / "initial_data.json"
         if json_path.exists():
             with open(json_path, "r", encoding="utf-8") as f:
@@ -152,6 +171,18 @@ def seed_database():
 
             for q_data in questions_data:
                 q_id = q_data["id"]
+                schema_sql = q_data.get("schemaSql", "-- Sem schema\n")
+                data_sql = generate_data_sql(q_data.get("sampleTables", []))
+                answer_sql = q_data.get("starterSql", "SELECT 1;")
+
+                logger.info(f"Validando dinamicamente questão #{q_id}: '{q_data['title']}'...")
+                val_res = QuestionValidator.validate_and_setup_question(
+                    question_id=q_id,
+                    schema_sql=schema_sql,
+                    data_sql=data_sql,
+                    answer_sql=answer_sql
+                )
+
                 q = db.query(Question).filter(Question.id == q_id).first()
                 if not q:
                     q = Question(
@@ -160,24 +191,33 @@ def seed_database():
                         difficulty=q_data["difficulty"],
                         status=q_data.get("publishedStatus", "PUBLISHED"),
                         description=q_data.get("description", ""),
-                        schema_sql=q_data.get("schemaSql", ""),
-                        sample_tables=q_data.get("sampleTables", []),
-                        expected_columns=q_data.get("expectedColumns", []),
+                        schema_sql=schema_sql,
+                        sample_tables=q_data.get("sampleTables") or val_res["sample_tables"],
+                        expected_columns=val_res["expected_columns"],
+                        expected_hash=val_res["expected_hash"],
                         created_by="user_001"
                     )
-                    # Associa categorias
                     cats = q_data.get("categories", [q_data.get("category", "Filtragem")])
                     for c_name in cats:
                         if c_name in cat_map:
                             q.categories.append(cat_map[c_name])
                     db.add(q)
-                    db.commit()
+                else:
+                    q.title = q_data["title"]
+                    q.difficulty = q_data["difficulty"]
+                    q.description = q_data.get("description", "")
+                    q.schema_sql = schema_sql
+                    q.expected_columns = val_res["expected_columns"]
+                    q.expected_hash = val_res["expected_hash"]
+                    if not q.sample_tables:
+                        q.sample_tables = q_data.get("sampleTables") or val_res["sample_tables"]
+
+                db.commit()
+
+                # Salva o Hash no Redis
+                redis_client.set_answer_hash(q_id, val_res["expected_hash"])
 
                 # Upload dos scripts SQL para o S3
-                schema_sql = q_data.get("schemaSql", "-- Sem schema\n")
-                data_sql = generate_data_sql(q_data.get("sampleTables", []))
-                answer_sql = q_data.get("starterSql", "SELECT 1;")
-
                 s3_manager.upload_question_sql_files(
                     question_id=q_id,
                     schema_sql=schema_sql,
@@ -185,14 +225,11 @@ def seed_database():
                     answer_sql=answer_sql
                 )
 
-            logger.info(f"[✓] {len(questions_data)} questões sincronizadas no RDS e no S3.")
+            logger.info(f"[✓] Todas as {len(questions_data)} questões foram validadas, geraram hash no RDS/Redis e subiram para o S3.")
 
-        # 6. Registra questão 1 como resolvida pelo aluno inicial
-        solved = db.query(UserSolvedQuestion).filter_by(user_id="user_101", question_id=1).first()
-        if not solved:
-            db.add(UserSolvedQuestion(user_id="user_101", question_id=1))
-            db.commit()
-            logger.info("[✓] Questão #1 associada como resolvida para user_101.")
+        # 6. Invalida caches do Redis para garantir frescor
+        redis_client.invalidate_questions_cache()
+        logger.info("[✓] Cache Redis de questões invalidado.")
 
         # 7. Sincroniza a sequence questions_id_seq com o maior id
         try:
@@ -202,13 +239,23 @@ def seed_database():
         except Exception as e:
             logger.warning(f"Não foi possível sincronizar sequence questions_id_seq: {e}")
 
-        # 8. Garante tabelas do DynamoDB prontas
+        # 8. Garante tabelas do DynamoDB prontas e purgadas de dados residuais
         try:
             dynamo = DynamoDBManager()
             dynamo.ensure_tables_exist()
-            logger.info("[✓] Tabelas DynamoDB verificadas/criadas com sucesso.")
+            # Limpa qualquer submissão residual para garantir ambiente 100% zerado
+            with dynamo.table.batch_writer() as batch:
+                scan = dynamo.table.scan(ProjectionExpression="submission_id")
+                for item in scan.get("Items", []):
+                    batch.delete_item(Key={"submission_id": item["submission_id"]})
+            # Limpa qualquer log de CRUD residual
+            with dynamo.crud_table.batch_writer() as batch:
+                scan = dynamo.crud_table.scan(ProjectionExpression="action_id")
+                for item in scan.get("Items", []):
+                    batch.delete_item(Key={"action_id": item["action_id"]})
+            logger.info("[✓] Tabelas DynamoDB verificadas e expurgadas com sucesso (0 submissões residuais).")
         except Exception as e:
-            logger.warning(f"Aviso ao inicializar DynamoDB no seed: {e}")
+            logger.warning(f"Aviso ao inicializar/limpar DynamoDB no seed: {e}")
 
         # 9. Garante filas SQS prontas
         try:

@@ -4,18 +4,18 @@ export const MOCK_ACCOUNTS = {
     name: "Gustavo Santos",
     email: "aluno@sqlarena.com",
     role: "STUDENT",
-    score: 180,
-    solvedCount: 5,
-    streakDays: 4,
+    score: 0,
+    solvedCount: 0,
+    streakDays: 0,
   },
   "instrutor@sqlarena.com": {
     id: "user_001",
     name: "Carlos Silva",
     email: "instrutor@sqlarena.com",
     role: "INSTRUCTOR",
-    score: 350,
-    solvedCount: 8,
-    streakDays: 12,
+    score: 0,
+    solvedCount: 0,
+    streakDays: 0,
   },
 };
 
@@ -26,7 +26,7 @@ export const MOCK_QUESTIONS = [
     difficulty: "Médio",
     categories: ["Agrupamento", "Filtragem", "JOINs"],
     category: "Agrupamento",
-    status: "SOLVED",
+    status: "UNSOLVED",
     publishedStatus: "PUBLISHED",
     description: `A diretoria comercial precisa identificar os 5 clientes que geraram o maior volume financeiro em compras concluídas.
 

@@ -78,11 +78,11 @@ Na raiz do projeto (`SQLArena/`), execute no PowerShell:
 # Instalar dependências (apenas na primeira vez):
 pip install -r app/requirements.txt
 
-# Popular o banco relacional, subir scripts no S3 e gerar hashes no Redis:
+# Popular o banco relacional, validar dinamicamente as 21 questões, subir scripts no S3 e gerar hashes no RDS e Redis:
 $env:PYTHONPATH="."
 python app/database/seed.py
 ```
-> ✅ O seed popula as 12 categorias, os usuários de teste, 21 questões reais com schemas sandbox no PostgreSQL e hashes SHA-256 no Redis.
+> ✅ O seed valida cada uma das 21 questões em schemas isolados no PostgreSQL via `QuestionValidator`, extrai colunas e tabelas reais, calcula o hash canônico SHA-256, persiste no RDS (`expected_hash`) e no Redis, e cadastra os usuários iniciais com **score 0 e histórico limpo**.
 
 ---
 
@@ -127,8 +127,8 @@ npm run dev
 
 | Perfil | Email | Senha | Acesso |
 | :--- | :--- | :--- | :--- |
-| **Aluno** | `aluno@sqlarena.com` | `123456` | Dashboard, Arena de Código Monaco (`Ctrl+Enter`), Histórico em Modal, Pontuação de XP |
-| **Instrutor** | `instrutor@sqlarena.com` | `123456` | Painel de Criação de Questões, validação de `ORDER BY`, categorias N:N, Logs de Auditoria |
+| **Aluno** | `aluno@sqlarena.com` | `123456` | Dashboard, Arena Monaco (editor limpo com restauração da última tentativa), Histórico Completo em Modal, Pontuação |
+| **Instrutor** | `instrutor@sqlarena.com` | `123456` | Painel com Validação Dinâmica em Sandbox (DDL, DML, `ORDER BY` obrigatório, hash SHA-256 no RDS/Redis), Categorias N:N, Auditoria |
 
 ---
 

@@ -68,15 +68,24 @@ Para organizar o aprendizado de forma granular, as questões são categorizadas 
 
 ---
 
-## 5. Estrutura e Ciclo de Vida das Questões
+## 5. Estrutura, Validação e Ciclo de Vida das Questões
 
-As questões são imutáveis após a publicação para garantir consistência e reprodutibilidade:
+As questões passam por validação estrita antes da publicação e são imutáveis após ativadas:
 
 * **Ciclo de Estados:**
   * **DRAFT:** Estado inicial no cadastro pelo instrutor. Invisível para os alunos e não aceita submissões.
-  * **READY:** Validação técnica concluída (os scripts SQL foram executados com sucesso no PostgreSQL e o Hash canônico foi gravado no Redis). Continua invisível aos alunos.
+  * **READY:** Validação técnica concluída (os scripts SQL foram executados com sucesso na sandbox do PostgreSQL e o Hash canônico foi gravado no RDS e no Redis). Continua invisível aos alunos.
   * **PUBLISHED:** Questão pública. Disponível no mural para resolução pelos alunos.
-* **Exclusão Atômica:** O instrutor pode excluir uma questão a qualquer momento. O ID nunca é reutilizado. A exclusão remove a questão do RDS, apaga o prefixo `questions/{id}/` no S3 e emite um evento para os Workers removerem o respectivo schema local. O histórico no DynamoDB permanece preservado para auditoria.
+* **Motor de Validação Dinâmica de Questões (`QuestionValidator`):**
+  Durante o cadastro (via interface do instrutor ou seed do sistema), a aplicação executa um teste prévio automático:
+  1. Cria um schema temporário isolado (`pergunta_{id}`).
+  2. Executa o DDL (`schema.sql`) e a carga inicial DML (`data.sql`).
+  3. Inspeciona as tabelas relacionais criadas para derivar e validar os dados de exemplo (`sample_tables`).
+  4. Executa a consulta oficial (`answer.sql`), exigindo obrigatoriamente a presença de `ORDER BY`.
+  5. Extrai as colunas esperadas (`expected_columns`) e calcula o Hash SHA-256 canônico determinístico.
+  6. Se qualquer etapa falhar (erro de sintaxe, violação de integridade referencial ou ausência de `ORDER BY`), é disparado `DROP SCHEMA CASCADE` e a criação é rejeitada com mensagem descritiva.
+  7. Se for bem-sucedida, o schema permanece provisionado e pronto para consultas dos alunos.
+* **Exclusão Atômica:** O instrutor pode excluir uma questão a qualquer momento. A exclusão remove a questão do RDS, invalida o cache no Redis, apaga o schema sandbox no PostgreSQL e remove os scripts no S3. O histórico no DynamoDB permanece preservado para auditoria.
 
 ### 5.1. Armazenamento Exclusivo em Scripts SQL (Sem CSV)
 Cada questão reside no S3 sob o prefixo `questions/{question_id}/` contendo estritamente três arquivos SQL:
@@ -85,7 +94,7 @@ Cada questão reside no S3 sob o prefixo `questions/{question_id}/` contendo est
 3. `answer.sql`: Consulta gabarito canônica elaborada pelo instrutor.
 
 * **Obrigatoriedade do ORDER BY no Gabarito:**
-  Para garantir determinismo matemático estrito no resultado, o arquivo `answer.sql` **DEVE conter obrigatoriamente** a cláusula `ORDER BY`. O backend valida essa presença antes de permitir a transição para `READY`.
+  Para garantir determinismo matemático estrito no resultado, o arquivo `answer.sql` **DEVE conter obrigatoriamente** a cláusula `ORDER BY`. O backend valida essa presença antes de permitir o cadastro.
 * **Flexibilidade do Aluno:**
   O aluno **não** é obrigado a digitar explicitamente a palavra `ORDER BY`, contanto que o conjunto de dados retornado por sua consulta possua a mesma exata ordenação, colunas e valores do gabarito.
 
@@ -93,7 +102,7 @@ Cada questão reside no S3 sob o prefixo `questions/{question_id}/` contendo est
 
 ## 6. Motor de Execução Local em Sandbox (Workers EC2)
 
-Os Workers da Camada de Processamento mantêm um SGBD PostgreSQL 16 local:
+Os Workers da Camada de Processamento mantêm um SGBD PostgreSQL 16:
 
 * **Isolamento de Schemas:** Cada questão possui um schema exclusivo (ex: `pergunta_10`). Antes de executar a consulta do aluno, o Worker aplica `SET search_path TO pergunta_10`.
 * **Segurança e Privilégios Mínimos:** A consulta do aluno é executada sob uma *role* de banco limitada exclusivamente a comandos de leitura (`SELECT`). Qualquer tentativa de DDL (`CREATE`, `DROP`, `ALTER`) ou DML de escrita (`INSERT`, `UPDATE`, `DELETE`) é imediatamente rejeitada pelo SGBD.
@@ -102,15 +111,17 @@ Os Workers da Camada de Processamento mantêm um SGBD PostgreSQL 16 local:
 
 ---
 
-## 7. Comparação Rigorosa e Hashes de Resposta (Strict Mode)
+## 7. Comparação Rigorosa e Persistência do Hash Canônico (Strict Mode)
 
 Para garantir máxima performance de rede e economia de tráfego entre instâncias:
 
-* **Validação por SHA-256:**
-  1. Durante a validação da questão, o resultado do `answer.sql` é executado no PostgreSQL e serializado em uma representação canônica textual determinística (incluindo nomes de colunas, tipos, ordenação exata de linhas, nulos e valores).
-  2. Essa representação canônica é convertida em um **Hash SHA-256** e armazenada no Redis.
-  3. Quando o aluno submete sua consulta, o Worker executa-a no PostgreSQL local e gera o hash SHA-256 do resultado produzido.
-  4. A validação do acerto é uma comparação direta de Hashes (O(1)).
+* **Validação por SHA-256 e Dupla Persistência:**
+  1. Durante a validação da questão, o resultado do `answer.sql` é executado no PostgreSQL e serializado em uma representação canônica textual determinística (nomes de colunas, tipos, ordenação exata de linhas, nulos e valores).
+  2. Essa representação canônica é convertida em um **Hash SHA-256** e persistida:
+     - No banco relacional **RDS PostgreSQL** (coluna `questions.expected_hash`).
+     - No **Redis** (chave `question:{id}:answer_hash`) com recuperação em tempo constante $O(1)$.
+  3. Quando o aluno submete sua consulta, o Worker executa-a no PostgreSQL e gera o hash SHA-256 do resultado produzido.
+  4. Para comparar, o Worker consulta o Redis primeiro; caso haja miss, busca o `expected_hash` no RDS; apenas em último caso executa o gabarito.
 * **Strict Mode (Regra de 100%):**
   Não existe tolerância para divergência de tipos ou formatação (ex: `FLOAT` diverge de `NUMERIC`; `10.5` diverge de `10.50`). Se os hashes divergirem, a resposta é classificada como `WRONG_ANSWER`.
 * **Diagnósticos Técnicos Educativos:**
@@ -118,11 +129,14 @@ Para garantir máxima performance de rede e economia de tráfego entre instânci
 
 ---
 
-## 8. Submissões, Rate Limit e Pontuação
+## 8. Submissões, Rate Limit, Pontuação e Estado Inicial
 
-* **Rate Limit Global:** Intervalo mínimo obrigatório de **5 segundos** por aluno entre qualquer tentativa de submissão, verificado via Redis e FastAPI. Requisições recebidas antes de 5 segundos retornam erro com contagem regressiva.
+* **Rate Limit Global:** Intervalo mínimo obrigatório de **5 segundos** por aluno entre qualquer tentativa de submissão, verificado via Redis e FastAPI. Requisições recebidas antes de 5 segundos retornam erro HTTP 429 com contagem regressiva.
+* **Início Limpo dos Usuários (Sem Scores Fictícios):**
+  Todos os usuários iniciam com pontuação zerada (`score = 0`), zero questões resolvidas (`solved_count = 0`) e frequência zerada (`streak_days = 0`). Não há questões pré-resolvidas no banco ou no histórico.
 * **Sistema de Pontuação:** Cada questão acertada de forma inédita concede **+10 XP** ao aluno (consolidado no RDS). Tentativas incorretas ou submissões repetidas de questões já resolvidas não acumulam pontos adicionais.
 * **Registro Imutável no DynamoDB:** Todas as tentativas (completas, com erro de sintaxe ou gabarito divergente) são gravadas imutavelmente no DynamoDB (`sqlarena-submissions-log`) contendo timestamp, código SQL, tempo de execução (ms) e pontuação.
+* **Cache Inteligente de Questões (Redis):** As listagens e detalhes de questões públicas são cacheados no Redis (`TTL 300s`), sendo invalidadas instantaneamente em operações de CRUD ou publicação pelo instrutor.
 
 ---
 
@@ -189,12 +203,13 @@ O frontend foi desenvolvido com foco em usabilidade e performance, eliminando la
 * **Editor SQL Monaco à Direita (Travado na Tela):**
   * Ocupa toda a altura disponível da viewport (`h-[calc(100vh-230px)]`).
   * Não redimensionável manualmente, com barra de rolagem interna suave para scripts longos.
+  * **Estado Inicial Limpo e Restauração Inteligente:** Se o aluno ainda não tentou a questão, o editor inicia completamente limpo (`""`), sem códigos pré-digitados ou templates indesejados. Caso o aluno já tenha submetido consultas anteriores para a questão (mesmo que com erro), a última consulta enviada é restaurada dinamicamente via API (`GET /api/submissions/last?question_id={id}`), permitindo continuar de onde parou.
   * Execução rápida via atalho de teclado `Ctrl + Enter` ou botão de execução com feedback de carregamento.
   * Botão de Tela Cheia (*Fullscreen*) para foco total.
   * Drawer de resultados com tempo de execução (ms), linhas retornadas e banner de diagnóstico.
 
-### 10.4. Fila de Submissões & Histórico em Modal Dinâmico
-* **Fila Recente na Navbar:** Botão posicionado imediatamente à esquerda do perfil do usuário com indicador luminoso de atividade, exibindo as últimas 5 submissões com status em tempo real.
+### 10.4. Histórico de Submissões em Modal Dinâmico
+* **Botão Direto na Navbar:** Botão dedicado "Histórico de Submissões" posicionado à esquerda do perfil do usuário. Substitui o antigo modal resumido de fila, fornecendo acesso direto ao histórico completo.
 * **Histórico em Modal (Preservação de Contexto):**
   * O histórico completo abre como um modal sobreposto sobre a tela atual, **sem fazer o aluno perder o código nem o estado de trabalho na Arena**.
   * Botão de **Atualizar** (`RotateCw`) sob demanda.
@@ -230,15 +245,15 @@ A constante `USE_MOCK` em `src/services/api.js` está definida como `false` por 
 
 | Requisito | Descrição | Status | Componentes / Arquivos de Implementação |
 | :--- | :--- | :---: | :--- |
-| **REQ-01** | Banco relacional central para metadados, categorias N:N, questões e pontuações | **Atendido (100%)** | `app/database/models.py`, `app/database/connection.py`, `app/database/seed.py`, PostgreSQL (RDS 15432) |
-| **REQ-02** | 12 categorias pré-definidas com relação N:N (`question_categories`) | **Atendido (100%)** | `app/database/models.py`, `app/database/seed.py`, `app/backend/routers/categories.py` |
-| **REQ-03** | Armazenamento de questões exclusivamente em scripts SQL puros (`schema.sql`, `data.sql`, `answer.sql`) no S3 | **Atendido (100%)** | `app/s3/s3_manager.py`, `app/database/seed.py`, `app/backend/routers/questions.py` |
-| **REQ-04** | Obrigatoriedade de `ORDER BY` na resposta oficial (`answer.sql`) validada antes da publicação | **Atendido (100%)** | `app/backend/routers/questions.py`, `app/database/seed.py`, `frontend/src/pages/ProfessorPage.jsx` |
-| **REQ-05** | Cache Redis para rate limit (5s) e hash SHA-256 canônico do gabarito para comparação O(1) | **Atendido (100%)** | `app/redis_client.py`, `app/backend/routers/submissions.py`, `app/worker/worker_service.py` |
-| **REQ-06** | Fila Amazon SQS (`sqlarena-submissions-queue`) desacoplando a API dos Workers | **Atendido (100%)** | `app/sqs/queue_manager.py`, `app/backend/routers/submissions.py`, `app/worker/worker_service.py` |
-| **REQ-07** | Workers em background com motor PostgreSQL 16 isolado por schema (`pergunta_X`), Read-Only e timeout de 3s | **Atendido (100%)** | `app/worker/worker_service.py`, `app/worker/main.py`, PostgreSQL Sandbox |
-| **REQ-08** | Sistema de pontuação: +10 XP para acertos inéditos consolidados no banco RDS | **Atendido (100%)** | `app/worker/worker_service.py`, `app/database/models.py` (coluna `score_xp` em `users`) |
-| **REQ-09** | Log imutável de submissões e ações administrativas no Amazon DynamoDB | **Atendido (100%)** | `app/dynamodb/dynamo_manager.py`, `app/worker/worker_service.py`, `app/backend/routers/questions.py` |
+| **REQ-01** | Banco relacional central para metadados, categorias N:N, questões e pontuações | **Atendido (100%)** | `app/database/models.py`, `app/database/session.py`, `app/database/seed.py`, PostgreSQL (RDS 15432) |
+| **REQ-02** | 12 categorias pré-definidas com relação N:N (`question_categories`) | **Atendido (100%)** | `app/database/models.py`, `app/database/seed.py`, `app/api/categories.py` |
+| **REQ-03** | Armazenamento de questões exclusivamente em scripts SQL puros (`schema.sql`, `data.sql`, `answer.sql`) no S3 | **Atendido (100%)** | `app/s3/s3_manager.py`, `app/database/seed.py`, `app/api/questions.py` |
+| **REQ-04** | Obrigatoriedade de `ORDER BY` na resposta oficial (`answer.sql`) validada antes da publicação | **Atendido (100%)** | `app/api/questions.py`, `app/database/validator.py`, `app/database/seed.py`, `frontend/src/pages/ProfessorPage.jsx` |
+| **REQ-05** | Cache Redis para rate limit (5s) e hash SHA-256 canônico do gabarito para comparação O(1) | **Atendido (100%)** | `app/cache/redis_client.py`, `app/api/submissions.py`, `app/worker/executor.py` |
+| **REQ-06** | Fila Amazon SQS (`sqlarena-submissions-queue`) desacoplando a API dos Workers | **Atendido (100%)** | `app/sqs/queue_manager.py`, `app/api/submissions.py`, `app/worker/main.py` |
+| **REQ-07** | Workers em background com motor PostgreSQL 16 isolado por schema (`pergunta_X`), Read-Only e timeout de 3s | **Atendido (100%)** | `app/worker/executor.py`, `app/worker/main.py`, PostgreSQL Sandbox |
+| **REQ-08** | Sistema de pontuação: +10 XP para acertos inéditos consolidados no banco RDS | **Atendido (100%)** | `app/worker/executor.py`, `app/database/models.py` (coluna `score` em `users`) |
+| **REQ-09** | Log imutável de submissões e ações administrativas no Amazon DynamoDB | **Atendido (100%)** | `app/dynamodb/dynamo_manager.py`, `app/worker/main.py`, `app/api/questions.py` |
 | **REQ-10** | Frontend SPA 100% responsivo, Monaco Editor com atalho `Ctrl+Enter`, histórico dinâmico sem perda de contexto | **Atendido (100%)** | `frontend/src/` (React 19 + Vite 6 + Tailwind CSS v4 + Monaco Editor) |
 | **REQ-11** | Infraestrutura como Código (Terraform) cobrindo VPC, Duplo ASG, ALB, RDS, ElastiCache, S3, SQS e DynamoDB | **Atendido (100%)** | `terraform/*.tf`, `terraform/worker_asg.tf`, `terraform/alb.tf`, `terraform/asg.tf` |
 
