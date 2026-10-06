@@ -1,179 +1,137 @@
-# SQLArena - Plataforma de Ensino e Avaliação de SQL
+# ⚔️ SQLArena - Plataforma de Ensino e Avaliação de SQL
 
-O **SQLArena** é uma plataforma distribuída, elástica e interativa para o ensino e prática de consultas SQL. Ela permite que instrutores cadastrem exercícios práticos e que alunos resolvam desafios com execução real em um banco de dados **PostgreSQL 16** isolado por schema, recebendo feedback instantâneo sobre acerto e desempenho.
-
-A arquitetura do sistema adota o padrão de **Single Page Application (SPA)** no frontend comunicando-se assincronamente com uma **API FastAPI**, orquestrada por mensageria com **Amazon SQS**, armazenamento de scripts no **Amazon S3**, cache e rate limit no **Redis**, persistência relacional no **AWS RDS PostgreSQL**, logs imutáveis no **Amazon DynamoDB** e **Workers em background** com motor de execução isolado (Sandbox).
+Plataforma interativa para ensino e prática de consultas SQL em ambiente real **PostgreSQL 16** com isolamento por schemas (Sandbox), avaliação assíncrona via **Amazon SQS** e cache **Redis**.
 
 ---
 
-## 1. Arquitetura da Solução
+## 🚀 Como Rodar o Projeto (Guia Rápido)
 
-```text
-[ Aluno / Frontend React (Vite :5173) ]
-                     │
-                     ▼ (HTTP / JWT)
-         [ FastAPI Web API (:8000) ]
-            │              │
-            │ (Rate Limit) │ (Publica Submissão)
-            ▼              ▼
-     [ Redis (:16379) ]  [ Amazon SQS (:4566) ]
-                           │
-                           ▼ (Consome mensagem)
-                  [ Worker de Avaliação ]
-                           │
-         ┌─────────────────┼─────────────────┐
-         │                 │                 │
-         ▼                 ▼                 ▼
-[ PostgreSQL Sandbox ]   [ Redis Hash ]    [ RDS Metadata ]
-  (Executa em Schema      (Compara SHA-256    (Concede +10 XP
-   Isolado Read-Only)     com Gabarito O(1))  para inédito)
-                           │
-                           ▼
-                 [ Amazon DynamoDB ]
-                  (Log Imutável)
-```
-
-### Componentes Principais:
-1. **Frontend SPA (`frontend/`):** React 19 + Tailwind CSS v4 + Monaco Editor, com atalhos de execução (`Ctrl + Enter`), histórico persistente em modal sem perda de contexto e visualização de schema relacional.
-2. **FastAPI Web API (`app/main.py` e `app/backend/`):** Autenticação JWT, CRUD de categorias N:N e questões, validação de rate limit (5s) e despacho assíncrono para a fila SQS.
-3. **Fila Amazon SQS (`sqlarena-submissions-queue`):** Desacopla a camada web do processamento pesado.
-4. **Worker Sandbox (`app/worker/`):** Consome a fila, executa as consultas no PostgreSQL dentro de schemas isolados (`pergunta_X`), em modo *Read-Only* e com `statement_timeout = 3000ms`.
-5. **Amazon S3 (`sqlarena-questions-bucket`):** Armazena os scripts SQL puros de cada questão (`schema.sql`, `data.sql`, `answer.sql`). Sem dependência de CSVs ou binários externos.
-6. **Redis / ElastiCache:** Rate limit global por aluno (5s) e cache do Hash SHA-256 do gabarito canônico para validação instantânea em O(1).
-7. **PostgreSQL / RDS:** Banco relacional para usuários, categorias N:N, questões e pontuações consolidadas.
-8. **Amazon DynamoDB:** Log imutável de submissões (`sqlarena-submissions-log`) e auditoria de ações (`sqlarena-crud-actions-log`).
-9. **Infraestrutura como Código (`terraform/`):** VPC, Subnets, Duplo Auto Scaling Group (ASG 1 para API e ASG 2 para Workers), ALB, RDS, ElastiCache, SQS, S3 e DynamoDB.
+Siga os 5 passos abaixo para subir a aplicação completa do zero.
 
 ---
 
-## 2. Pré-requisitos do Sistema
+### Passo 1: Subir o Docker (Banco, Redis e Emulador AWS)
+> ⚠️ **Importante:** Certifique-se de que o **Docker Desktop** está aberto e rodando antes de executar este comando.
 
-* **Docker Desktop** (em execução) com suporte a Docker Compose.
-* **Python 3.11+** ou **3.12+** instalado.
-* **Node.js 18+** e **npm** instalados.
-* **Terraform CLI 1.5+** (opcional, para validação da infraestrutura IaC e deploy na nuvem).
-
----
-
-## 3. Passo a Passo Completo: Executar a Aplicação Localmente
-
-Siga os passos abaixo no **PowerShell** a partir da raiz do repositório (`C:\Users\Gustavo\Desktop\SQLArena`).
-
-### Passo 1: Subir a Infraestrutura Emulada (Docker)
-Inicie os serviços do banco relacional PostgreSQL, cache Redis, emulador de serviços AWS (Ministack) e o painel StackPort:
-
+Abra o terminal na **raiz do projeto** (`SQLArena/`):
 ```powershell
 docker compose -f ministack/docker-compose.yml up -d
 ```
-
-Verifique se todos os containers estão ativos:
-```powershell
-docker ps
-```
-> Deverão estar rodando 4 containers: `sqlarena-postgres`, `sqlarena-redis`, `ministack` e `stackport`.
+*Isso inicia 4 containers:*
+* **PostgreSQL 16:** `localhost:15432` (Banco da aplicação e Sandbox)
+* **Redis 7:** `localhost:16379` (Rate limit e Hashes dos gabaritos)
+* **Ministack (AWS):** `http://localhost:4566` (S3, SQS e DynamoDB locais)
+* **StackPort:** `http://localhost:8080` (Painel visual dos recursos AWS)
 
 ---
 
-### Passo 2: Ativar o Ambiente Virtual Python e Instalar Dependências
-Se ainda não possuir o `.venv`, crie e ative:
+### Passo 2: Ativar o Python e Rodar o Seed
+Na raiz do projeto (`SQLArena/`), execute no PowerShell:
 
 ```powershell
-# Criar o ambiente virtual (caso não exista):
-python -m venv app/.venv
+# 1. Ativar o ambiente virtual:
+& app/.venv/Scripts/Activate.ps1
 
-# Permitir execução de scripts no PowerShell (se necessário):
-Set-ExecutionPolicy -Scope Process -ExecutionPolicy RemoteSigned
+# (Caso o PowerShell bloqueie scripts, execute antes:)
+# Set-ExecutionPolicy -Scope Process -ExecutionPolicy RemoteSigned
 
+# 2. Instalar dependências (caso não tenha instalado):
+pip install -r app/requirements.txt
+
+# 3. Popular o banco com as 21 questões, scripts no S3 e hashes no Redis:
+$env:PYTHONPATH="."
+python app/database/seed.py
+```
+> ✅ Ao terminar, o script confirmará que as 12 categorias, usuários e 21 questões foram criados com sucesso.
+
+---
+
+### Passo 3: Ligar o Backend (FastAPI) — Terminal 1
+Na raiz do projeto (`SQLArena/`), abra um terminal dedicado:
+
+```powershell
 # Ativar o ambiente virtual:
 & app/.venv/Scripts/Activate.ps1
 
-# Instalar dependências:
-pip install -r app/requirements.txt
-```
-
----
-
-### Passo 3: Executar o Seed Inicial de Dados
-O script de seed cria as tabelas no PostgreSQL (RDS), cadastra as 12 categorias, usuários de teste, 21 questões reais com scripts no S3, inicializa os schemas de sandbox no PostgreSQL, computa os hashes SHA-256 dos gabaritos no Redis e provisiona tabelas no DynamoDB e fila no SQS:
-
-```powershell
-$env:PYTHONPATH="."
-& app/.venv/Scripts/python.exe app/database/seed.py
-```
-
----
-
-### Passo 4: Iniciar o Backend FastAPI (Terminal 1)
-Em um terminal dedicado com o `.venv` ativo:
-
-```powershell
-# Na raiz do projeto:
+# Iniciar o servidor FastAPI:
 uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
-> A API estará disponível em:
-> * Documentação Interativa (Swagger): **[http://localhost:8000/docs](http://localhost:8000/docs)**
-> * Endpoint de Saúde: **[http://localhost:8000/api/health](http://localhost:8000/api/health)**
+
+* 🌐 **API Rodando em:** [http://localhost:8000](http://localhost:8000)
+* 📖 **Documentação Interativa (Swagger):** [http://localhost:8000/docs](http://localhost:8000/docs)
+* 🩺 **Health Check:** [http://localhost:8000/api/health](http://localhost:8000/api/health)
 
 ---
 
-### Passo 5: Iniciar o Worker SQS (Terminal 2)
-Abra um **segundo terminal**, ative o `.venv` e inicie o Worker de processamento assíncrono:
+### Passo 4: Ligar o Worker SQS (Motor Sandbox) — Terminal 2
+Abra um **segundo terminal** na raiz do projeto (`SQLArena/`):
 
 ```powershell
+# Ativar o ambiente virtual:
 & app/.venv/Scripts/Activate.ps1
+
+# Iniciar o Worker:
 $env:PYTHONPATH="."
 python app/worker/main.py
 ```
-> O Worker ficará em loop consumindo mensagens da fila `sqlarena-submissions-queue`. Conforme os alunos enviarem códigos na Arena, os logs de validação, hash e atribuição de XP aparecerão aqui em tempo real.
+
+* ⚙️ **O que ele faz:** Fica escutando a fila SQS `sqlarena-submissions-queue`. Quando você clica em *"Executar"* no frontend, o worker pega a query, roda no schema isolado do PostgreSQL, compara o resultado via SHA-256 no Redis e atualiza o XP do aluno. Deixe esse terminal aberto!
 
 ---
 
-### Passo 6: Iniciar o Frontend React (Terminal 3)
-Abra um **terceiro terminal**, acesse a pasta `frontend` e inicie o servidor Vite:
+### Passo 5: Ligar o Frontend (React + Vite) — Terminal 3
+Abra um **terceiro terminal**, acesse a pasta `frontend`:
 
 ```powershell
+# Entrar na pasta do frontend:
 cd frontend
+
+# Instalar dependências (apenas na primeira vez):
+npm install
+
+# Iniciar o servidor de desenvolvimento:
 npm run dev
 ```
-> A aplicação web estará acessível em: **[http://localhost:5173](http://localhost:5173)**
+
+* 🚀 **Acesse o sistema no seu navegador:** **[http://localhost:5173](http://localhost:5173)**
 
 ---
 
-## 4. Credenciais de Acesso & Contas de Teste
+## 🔑 Credenciais para Login
 
-O seed provisiona automaticamente duas contas prontas para uso:
+O seed já deixa criadas duas contas prontas:
 
 | Perfil | Email | Senha | Funcionalidades |
 | :--- | :--- | :--- | :--- |
-| **Aluno** | `aluno@sqlarena.com` | `123456` | Visualizar Dashboard, resolver questões na Arena, rodar com `Ctrl+Enter`, ver histórico e pontuar XP |
-| **Instrutor** | `instrutor@sqlarena.com` | `123456` | Painel de criação de questões, validação de `ORDER BY`, categorias N:N e auditoria |
+| **Aluno** | `aluno@sqlarena.com` | `123456` | Mural de Questões, Arena de Código (Monaco Editor com `Ctrl+Enter`), Histórico em Modal, Pontuação de XP |
+| **Instrutor** | `instrutor@sqlarena.com` | `123456` | Painel de Criação de Questões, validação de `ORDER BY`, categorias N:N, Logs de Auditoria |
 
 ---
 
-## 5. Dashboards e Portas do Sistema
+## 🛑 Como Desligar e Limpar Tudo (Teardown)
 
-| Serviço | Endereço Local | Descrição |
-| :--- | :--- | :--- |
-| **Frontend SPA** | `http://localhost:5173` | Interface React + Tailwind CSS v4 |
-| **Backend API Docs** | `http://localhost:8000/docs` | Documentação Swagger interativa do FastAPI |
-| **StackPort GUI** | `http://localhost:8080` | Interface visual para navegar nos buckets S3 e filas SQS |
-| **PostgreSQL RDS** | `localhost:15432` | Banco relacional central (`app_db` / user `postgres`) |
-| **Redis Cache** | `localhost:16379` | Cache de rate limit e hashes SHA-256 |
-| **Ministack AWS Gateway** | `http://localhost:4566` | Emulador das APIs S3, SQS e DynamoDB |
+Quando terminar de testar ou quiser resetar o ambiente:
+
+1. **Parar as aplicações:** Pressione `Ctrl + C` nos terminais do Frontend, Worker e Backend.
+2. **Destruir os containers e volumes Docker:**
+   ```powershell
+   docker compose -f ministack/docker-compose.yml down -v
+   ```
+   > A flag `-v` apaga os volumes do banco e cache, deixando a máquina 100% limpa.
 
 ---
 
-## 6. Execução da Suíte de Testes Automatizados
+## 🧪 Como Rodar os Testes Automatizados
 
-O projeto inclui testes de unidade e ponta a ponta (E2E) cobrindo API, SQS, Worker e banco:
+Com a infraestrutura Docker ativa (Passo 1):
 
 ```powershell
-# Com o .venv ativo e a infraestrutura Docker rodando:
+# Na raiz do projeto, com o .venv ativo:
 $env:PYTHONPATH="."
 pytest app/testes/test_api.py app/testes/test_worker_e2e.py app/testes/test_e2e_full.py -v
 ```
 
-Para rodar os testes individuais dos módulos de serviço AWS:
+Testes individuais dos módulos AWS locais:
 ```powershell
 python app/testes/main_s3.py
 python app/testes/main_sqs.py
@@ -182,89 +140,74 @@ python app/testes/main_dynamodb.py
 
 ---
 
-## 7. Como Desligar e Destruir o Ambiente (Teardown)
+## 🏛️ Arquitetura e Fluxo de Dados
 
-Quando desejar encerrar a execução e resetar todo o ambiente de desenvolvimento:
+```text
+[ Aluno no Frontend (React :5173) ]
+                 │
+                 ▼ (HTTP / JWT)
+     [ FastAPI Web API (:8000) ]
+        │              │
+        │ Rate Limit   │ Publica na fila
+        ▼ (5s)         ▼
+  [ Redis (:16379) ]  [ Amazon SQS (:4566) ]
+                       │
+                       ▼ Consome mensagem
+              [ Worker Sandbox ]
+                       │
+     ┌─────────────────┼─────────────────┐
+     │                 │                 │
+     ▼                 ▼                 ▼
+[ Postgres Sandbox ] [ Redis Hash ]    [ RDS PostgreSQL ]
+  (Executa em          (Compara          (Concede +10 XP
+   Schema Isolado       SHA-256 O(1))     se inédito)
+   Read-Only 3s)       │
+                       ▼
+             [ Amazon DynamoDB ]
+              (Log Imutável)
+```
 
-1. **Parar os servidores em execução nos terminais:**
-   Pressione `Ctrl + C` nos terminais do FastAPI, do Worker e do Frontend.
-
-2. **Destruir os containers Docker e remover os volumes de dados:**
-   ```powershell
-   docker compose -f ministack/docker-compose.yml down -v
-   ```
-   > A flag `-v` remove os volumes associados, garantindo que nenhum resíduo de banco ou cache permaneça armazenado.
+### Principais Componentes:
+* **Frontend SPA (`frontend/`):** React 19 + Tailwind CSS v4 + Monaco Editor com atalho `Ctrl+Enter`, histórico em modal dinâmico e diagrama de banco.
+* **FastAPI (`app/`):** Endpoints REST para autenticação JWT, categorias N:N, questões e submissões com rate limit.
+* **Amazon SQS:** Fila assíncrona que absorve picos e desacopla a API dos Workers.
+* **Worker Sandbox (`app/worker/`):** Executa queries em schemas isolados (`pergunta_X`), em modo estrito de leitura (`SELECT` only) e com timeout de 3 segundos.
+* **Amazon S3:** Armazena os scripts SQL puros de cada questão (`schema.sql`, `data.sql`, `answer.sql`). Sem CSVs externos.
+* **Redis:** Cache de rate limit por aluno (5 segundos) e hash SHA-256 canônico do gabarito para validação ultra-rápida em O(1).
+* **DynamoDB:** Histórico completo de submissões e logs de auditoria de ações de instrutores.
 
 ---
 
-## 8. Estrutura de Diretórios
+## 🗺️ Estrutura de Pastas
 
 ```text
 SQLArena/
-├── ministack/                   # Configuração e persistência do emulador local
-│   ├── docker-compose.yml       # Orquestração do Postgres, Redis, Ministack e StackPort
-│   └── data/                    # Dados locais persistidos
-│
-├── terraform/                   # Infraestrutura como Código (IaC)
-│   ├── providers.tf             # Configuração do provedor AWS
-│   ├── vpc.tf                   # Rede, subnets públicas/privadas e gateways
-│   ├── alb.tf                   # Application Load Balancer
-│   ├── asg.tf                   # Auto Scaling Group da Camada Web (API)
-│   ├── worker_asg.tf            # Auto Scaling Group da Camada de Workers
-│   ├── rds.tf                   # Instância PostgreSQL RDS
-│   ├── elasticache.tf           # Cluster Redis ElastiCache
-│   ├── s3.tf                    # Bucket para scripts das questões
-│   ├── sqs.tf                   # Fila principal de submissões e Dead Letter Queue (DLQ)
-│   ├── dynamodb.tf              # Tabelas de histórico e auditoria
-│   └── envs/                    # Variáveis para local (local.tfvars) e AWS (aws.tfvars)
-│
-├── app/                         # Backend, Microsserviços e Banco
-│   ├── main.py                  # Ponto de entrada unificado da aplicação FastAPI
-│   ├── redis_client.py          # Cliente gerenciador do Redis (hashes e rate limit)
-│   ├── backend/                 # API FastAPI com routers modularizados
-│   │   ├── main.py              # Exporta a aplicação web
-│   │   └── routers/             # Endpoints (auth, questions, submissions, categories, audit)
-│   ├── database/                # Conexão SQLAlchemy, modelos relacionais e seed
-│   │   ├── connection.py        # Pool de conexões RDS
-│   │   ├── models.py            # Modelos (User, Question, Category, Submission)
-│   │   ├── seed.py              # Script populador completo com 21 questões reais
-│   │   └── initial_data.json    # Dados das 21 questões e scripts SQL
-│   ├── worker/                  # Serviço Worker assíncrono
-│   │   ├── main.py              # Inicializador do Worker de consumo da fila
-│   │   └── worker_service.py    # Motor de execução segura em Sandbox PostgreSQL
-│   ├── s3/                      # Gerenciador do Amazon S3 (upload/download scripts)
-│   ├── sqs/                     # Gerenciador do Amazon SQS (envio, recepção e purge)
-│   ├── dynamodb/                # Gerenciador do Amazon DynamoDB (logs imutáveis)
-│   └── testes/                  # Suíte de testes unitários e de integração
-│
-└── frontend/                    # Single Page Application (React 19 + Vite 6 + Tailwind CSS v4)
-    ├── src/
-    │   ├── components/          # Componentes (Navbar, SqlEditor, RelationalDiagram, HistoryModal...)
-    │   ├── pages/               # Páginas (LoginPage, QuestionDashboard, ArenaPage, ProfessorPage...)
-    │   └── services/            # Camada de serviços HTTP conectada à API FastAPI
-    └── package.json
+├── ministack/                   # Docker Compose (PostgreSQL, Redis, Ministack, StackPort)
+├── app/                         # Backend FastAPI, Workers e Banco
+│   ├── main.py                  # Ponto de entrada FastAPI (porta 8000)
+│   ├── backend/                 # Rotas da API (auth, questions, submissions, categories...)
+│   ├── database/                # Modelos SQLAlchemy, conexão e script de seed
+│   ├── worker/                  # Worker SQS e Sandbox PostgreSQL
+│   ├── s3/                      # Gerenciador do Amazon S3
+│   ├── sqs/                     # Gerenciador do Amazon SQS
+│   ├── dynamodb/                # Gerenciador do Amazon DynamoDB
+│   └── testes/                  # Suíte de testes automatizados com pytest
+├── frontend/                    # Single Page Application React (porta 5173)
+│   ├── src/pages/               # LoginPage, QuestionDashboard, ArenaPage, ProfessorPage...
+│   ├── src/components/          # SqlEditor (Monaco), RelationalDiagram, Navbar...
+│   └── src/services/            # Chamadas HTTP Axios para o backend (USE_MOCK = false)
+└── terraform/                   # Infraestrutura como Código (IaC para deploy na AWS)
 ```
 
 ---
 
-## 9. Deploy na Nuvem AWS via Terraform
+## ☁️ Deploy na Nuvem AWS (Terraform)
 
-Para provisionar a infraestrutura completa na conta AWS real:
+Para subir a infraestrutura real na sua conta da Amazon:
 
 ```powershell
 cd terraform
-
-# Inicializar os provedores:
 terraform init
-
-# Visualizar o plano de recursos que serão criados:
 terraform plan -var-file="envs/aws.tfvars"
-
-# Aplicar o provisionamento na AWS:
 terraform apply -var-file="envs/aws.tfvars"
-```
-
-Para destruir os recursos na AWS ao concluir:
-```powershell
-terraform destroy -var-file="envs/aws.tfvars"
 ```
