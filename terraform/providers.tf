@@ -32,6 +32,10 @@ provider "aws" {
       iam         = var.local_endpoint
       s3          = var.local_endpoint
       dynamodb    = var.local_endpoint
+      elb         = var.local_endpoint
+      elbv2       = var.local_endpoint
+      autoscaling = var.local_endpoint
+      cloudwatch  = var.local_endpoint
     }
 
   }
