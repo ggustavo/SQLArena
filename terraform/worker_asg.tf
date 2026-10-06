@@ -56,8 +56,9 @@ resource "aws_autoscaling_group" "worker_asg" {
   }
 }
 
-# Política de Escala: Adiciona 1 instância quando houver acúmulo de mensagens na SQS
+# Política de Escala: Adiciona 1 instância quando houver acúmulo de mensagens na SQS (Apenas na Nuvem AWS)
 resource "aws_autoscaling_policy" "scale_out_workers" {
+  count                  = var.is_local ? 0 : 1
   name                   = "scale-out-on-sqs-backlog"
   scaling_adjustment     = 1
   adjustment_type        = "ChangeInCapacity"
@@ -65,8 +66,9 @@ resource "aws_autoscaling_policy" "scale_out_workers" {
   autoscaling_group_name = aws_autoscaling_group.worker_asg.name
 }
 
-# Alarme CloudWatch: SQS com 5 ou mais mensagens visíveis -> Sobe instância
+# Alarme CloudWatch: SQS com 5 ou mais mensagens visíveis -> Sobe instância (Apenas na Nuvem AWS)
 resource "aws_cloudwatch_metric_alarm" "sqs_high_backlog" {
+  count               = var.is_local ? 0 : 1
   alarm_name          = "${var.project_name}-sqs-high-backlog"
   comparison_operator = "GreaterThanOrEqualToThreshold"
   evaluation_periods  = 1
@@ -81,11 +83,12 @@ resource "aws_cloudwatch_metric_alarm" "sqs_high_backlog" {
     QueueName = var.sqs_queue_name
   }
 
-  alarm_actions = [aws_autoscaling_policy.scale_out_workers.arn]
+  alarm_actions = [aws_autoscaling_policy.scale_out_workers[0].arn]
 }
 
-# Política de Escala: Remove instância quando a fila esvaziar
+# Política de Escala: Remove instância quando a fila esvaziar (Apenas na Nuvem AWS)
 resource "aws_autoscaling_policy" "scale_in_workers" {
+  count                  = var.is_local ? 0 : 1
   name                   = "scale-in-on-sqs-empty"
   scaling_adjustment     = -1
   adjustment_type        = "ChangeInCapacity"
@@ -93,8 +96,9 @@ resource "aws_autoscaling_policy" "scale_in_workers" {
   autoscaling_group_name = aws_autoscaling_group.worker_asg.name
 }
 
-# Alarme CloudWatch: SQS vazia (< 1 mensagem) -> Reduz capacidade
+# Alarme CloudWatch: SQS vazia (< 1 mensagem) -> Reduz capacidade (Apenas na Nuvem AWS)
 resource "aws_cloudwatch_metric_alarm" "sqs_low_backlog" {
+  count               = var.is_local ? 0 : 1
   alarm_name          = "${var.project_name}-sqs-low-backlog"
   comparison_operator = "LessThanThreshold"
   evaluation_periods  = 2
@@ -109,5 +113,5 @@ resource "aws_cloudwatch_metric_alarm" "sqs_low_backlog" {
     QueueName = var.sqs_queue_name
   }
 
-  alarm_actions = [aws_autoscaling_policy.scale_in_workers.arn]
+  alarm_actions = [aws_autoscaling_policy.scale_in_workers[0].arn]
 }

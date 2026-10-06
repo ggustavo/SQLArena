@@ -55,8 +55,9 @@ resource "aws_autoscaling_group" "web_asg" {
   }
 }
 
-# Target Tracking Policy de CPU para o ASG 1 (Scale Out > 70%, Scale In < 25%)
+# Target Tracking Policy de CPU para o ASG 1 (Scale Out > 70%, Scale In < 25%) - Apenas na Nuvem AWS
 resource "aws_autoscaling_policy" "web_cpu_target_tracking" {
+  count                  = var.is_local ? 0 : 1
   name                   = "${var.project_name}-web-cpu-target-tracking"
   autoscaling_group_name = aws_autoscaling_group.web_asg.name
   policy_type            = "TargetTrackingScaling"
@@ -70,8 +71,9 @@ resource "aws_autoscaling_policy" "web_cpu_target_tracking" {
   }
 }
 
-# Políticas e Alarmes explícitos de CPU para Scale Out (> 70%) e Scale In (< 25%)
+# Políticas e Alarmes explícitos de CPU para Scale Out (> 70%) e Scale In (< 25%) - Apenas na Nuvem AWS
 resource "aws_autoscaling_policy" "web_scale_out_policy" {
+  count                  = var.is_local ? 0 : 1
   name                   = "${var.project_name}-web-scale-out"
   scaling_adjustment     = 1
   adjustment_type        = "ChangeInCapacity"
@@ -80,6 +82,7 @@ resource "aws_autoscaling_policy" "web_scale_out_policy" {
 }
 
 resource "aws_cloudwatch_metric_alarm" "web_cpu_high" {
+  count               = var.is_local ? 0 : 1
   alarm_name          = "${var.project_name}-web-cpu-high"
   comparison_operator = "GreaterThanThreshold"
   evaluation_periods  = 2
@@ -93,10 +96,11 @@ resource "aws_cloudwatch_metric_alarm" "web_cpu_high" {
     AutoScalingGroupName = aws_autoscaling_group.web_asg.name
   }
 
-  alarm_actions = [aws_autoscaling_policy.web_scale_out_policy.arn]
+  alarm_actions = [aws_autoscaling_policy.web_scale_out_policy[0].arn]
 }
 
 resource "aws_autoscaling_policy" "web_scale_in_policy" {
+  count                  = var.is_local ? 0 : 1
   name                   = "${var.project_name}-web-scale-in"
   scaling_adjustment     = -1
   adjustment_type        = "ChangeInCapacity"
@@ -105,6 +109,7 @@ resource "aws_autoscaling_policy" "web_scale_in_policy" {
 }
 
 resource "aws_cloudwatch_metric_alarm" "web_cpu_low" {
+  count               = var.is_local ? 0 : 1
   alarm_name          = "${var.project_name}-web-cpu-low"
   comparison_operator = "LessThanThreshold"
   evaluation_periods  = 2
@@ -118,5 +123,5 @@ resource "aws_cloudwatch_metric_alarm" "web_cpu_low" {
     AutoScalingGroupName = aws_autoscaling_group.web_asg.name
   }
 
-  alarm_actions = [aws_autoscaling_policy.web_scale_in_policy.arn]
+  alarm_actions = [aws_autoscaling_policy.web_scale_in_policy[0].arn]
 }

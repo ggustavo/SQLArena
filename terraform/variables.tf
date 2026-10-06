@@ -36,6 +36,13 @@ variable "aws_secret_key" {
   sensitive   = true
 }
 
+variable "aws_session_token" {
+  description = "AWS Session Token (obrigatório para credenciais temporárias do AWS Academy Learner Lab)"
+  type        = string
+  default     = ""
+  sensitive   = true
+}
+
 variable "local_endpoint" {
   description = "URL do ministack local (http://localhost:4566)"
   type        = string
