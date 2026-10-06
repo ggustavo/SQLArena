@@ -115,5 +115,18 @@ variable "dynamodb_crud_table_name" {
   default     = "sqlarena-crud-actions-log"
 }
 
+# --- Configurações de Deploy / Código ---
+variable "github_repo_url" {
+  description = "URL do repositório Git para clone automático no boot dos nós EC2"
+  type        = string
+  default     = "https://github.com/ggustavo/SQLArena.git"
+}
+
+variable "github_branch" {
+  description = "Branch do Git para checkout no boot dos nós EC2"
+  type        = string
+  default     = "main"
+}
+
 
 

@@ -107,3 +107,23 @@ app.include_router(categories_router, prefix="/api")
 app.include_router(questions_router, prefix="/api")
 app.include_router(submissions_router, prefix="/api")
 app.include_router(audit_router, prefix="/api")
+
+# Servir Frontend Compilado (Single Page Application no mesmo host)
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
+
+frontend_dist = _project_root / "frontend" / "dist"
+if frontend_dist.exists():
+    assets_dir = frontend_dist / "assets"
+    if assets_dir.exists():
+        app.mount("/assets", StaticFiles(directory=str(assets_dir)), name="assets")
+
+    @app.get("/{full_path:path}", include_in_schema=False)
+    async def serve_spa(full_path: str):
+        # Se for um arquivo existente em dist/ (ex: vite.svg, favicon), entrega o arquivo
+        file_path = frontend_dist / full_path
+        if full_path and file_path.exists() and file_path.is_file():
+            return FileResponse(file_path)
+        # Qualquer outra rota da SPA entrega index.html
+        return FileResponse(frontend_dist / "index.html")
+
