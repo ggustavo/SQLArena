@@ -53,16 +53,27 @@ class DynamoDBManager:
     ):
         self.table_name = table_name or os.getenv("DYNAMODB_TABLE_NAME", "sqlarena-submissions-log")
         self.region_name = region_name or os.getenv("AWS_REGION", "us-east-1")
-        self.endpoint_url = endpoint_url or os.getenv("AWS_ENDPOINT_URL", "http://localhost:4566")
+        raw_endpoint = endpoint_url if endpoint_url is not None else os.getenv("AWS_ENDPOINT_URL")
+        self.endpoint_url = raw_endpoint.strip() if raw_endpoint and raw_endpoint.strip() else None
 
-        aws_access_key = os.getenv("AWS_ACCESS_KEY_ID", "test")
-        aws_secret_key = os.getenv("AWS_SECRET_ACCESS_KEY", "test")
+        aws_access_key = os.getenv("AWS_ACCESS_KEY_ID")
+        aws_secret_key = os.getenv("AWS_SECRET_ACCESS_KEY")
+        if aws_access_key and aws_access_key.strip():
+            aws_access_key = aws_access_key.strip()
+        else:
+            aws_access_key = None
+
+        if aws_secret_key and aws_secret_key.strip():
+            aws_secret_key = aws_secret_key.strip()
+        else:
+            aws_secret_key = None
 
         client_kwargs: Dict[str, Any] = {
             "region_name": self.region_name,
-            "aws_access_key_id": aws_access_key,
-            "aws_secret_access_key": aws_secret_key,
         }
+        if aws_access_key and aws_secret_key:
+            client_kwargs["aws_access_key_id"] = aws_access_key
+            client_kwargs["aws_secret_access_key"] = aws_secret_key
 
         if self.endpoint_url:
             client_kwargs["endpoint_url"] = self.endpoint_url

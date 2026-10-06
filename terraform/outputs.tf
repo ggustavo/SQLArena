@@ -71,12 +71,12 @@ output "sqs_dlq_url" {
 # S3 Bucket
 output "s3_bucket_name" {
   description = "Nome do bucket S3 das questões"
-  value       = aws_s3_bucket.questions_bucket.id
+  value       = var.s3_bucket_name
 }
 
 output "s3_bucket_arn" {
   description = "ARN do bucket S3 das questões"
-  value       = aws_s3_bucket.questions_bucket.arn
+  value       = "arn:aws:s3:::${var.s3_bucket_name}"
 }
 
 # DynamoDB Tables

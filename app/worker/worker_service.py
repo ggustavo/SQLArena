@@ -44,14 +44,21 @@ class SQLArenaWorker:
         self.sqs_manager = SQSQueueManager()
 
         # 2. Conexao com DynamoDB
-        dynamo_endpoint = os.getenv("DYNAMODB_ENDPOINT_URL", os.getenv("AWS_ENDPOINT_URL", "http://localhost:4566"))
-        self.dynamodb = boto3.resource(
-            "dynamodb",
-            region_name=os.getenv("AWS_REGION", "us-east-1"),
-            endpoint_url=dynamo_endpoint,
-            aws_access_key_id=os.getenv("AWS_ACCESS_KEY_ID", "test"),
-            aws_secret_access_key=os.getenv("AWS_SECRET_ACCESS_KEY", "test")
-        )
+        raw_dynamo_endpoint = os.getenv("DYNAMODB_ENDPOINT_URL", os.getenv("AWS_ENDPOINT_URL", ""))
+        dynamo_endpoint = raw_dynamo_endpoint.strip() if raw_dynamo_endpoint.strip() else None
+
+        aws_access_key = os.getenv("AWS_ACCESS_KEY_ID")
+        aws_secret_key = os.getenv("AWS_SECRET_ACCESS_KEY")
+        dynamo_kwargs = {
+            "region_name": os.getenv("AWS_REGION", "us-east-1"),
+        }
+        if dynamo_endpoint:
+            dynamo_kwargs["endpoint_url"] = dynamo_endpoint
+        if aws_access_key and aws_access_key.strip() and aws_secret_key and aws_secret_key.strip():
+            dynamo_kwargs["aws_access_key_id"] = aws_access_key.strip()
+            dynamo_kwargs["aws_secret_access_key"] = aws_secret_key.strip()
+
+        self.dynamodb = boto3.resource("dynamodb", **dynamo_kwargs)
         self.submissions_log_table = self.dynamodb.Table(
             os.getenv("DYNAMODB_SUBMISSIONS_TABLE", "sqlarena-submissions-log")
         )

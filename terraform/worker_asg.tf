@@ -19,29 +19,30 @@ resource "aws_launch_template" "worker_lt" {
   }
 
   user_data = base64encode(<<-EOF
-              #!/bin/bash
-              set -e
-              echo "=== Inicializando no Worker SQLArena (Processamento SQS) ==="
+#!/bin/bash
+set -e
+exec > >(tee -a /var/log/user_data.log /var/log/cloud-init-output.log) 2>&1
+echo "=== Inicializando no Worker SQLArena (Processamento SQS) ==="
 
-              # 1. Atualizar SO e instalar dependencias
-              sudo apt-get update -y
-              sudo DEBIAN_FRONTEND=noninteractive apt-get install -y git python3 python3-pip python3-venv libpq-dev
+# 1. Atualizar SO e instalar dependencias
+sudo apt-get update -y
+sudo DEBIAN_FRONTEND=noninteractive apt-get install -y git python3 python3-pip python3-venv libpq-dev
 
-              # 2. Clonar repositorio
-              sudo mkdir -p /opt/sqlarena
-              cd /opt
-              sudo rm -rf sqlarena
-              git clone -b ${var.github_branch} ${var.github_repo_url} /opt/sqlarena
-              cd /opt/sqlarena
+# 2. Clonar repositorio
+sudo mkdir -p /opt/sqlarena
+cd /opt
+sudo rm -rf sqlarena
+git clone -b ${var.github_branch} ${var.github_repo_url} /opt/sqlarena
+cd /opt/sqlarena
 
-              # 3. Preparar virtualenv Python e dependencias
-              python3 -m venv app/.venv
-              source app/.venv/bin/activate
-              pip install --upgrade pip
-              pip install -r app/requirements.txt
+# 3. Preparar virtualenv Python e dependencias
+python3 -m venv app/.venv
+source app/.venv/bin/activate
+pip install --upgrade pip
+pip install -r app/requirements.txt
 
-              # 4. Escrever arquivo de configuracao app/.env
-              cat <<EOT > app/.env
+# 4. Escrever arquivo de configuracao app/.env
+cat <<EOT > app/.env
 ENVIRONMENT=production
 DATABASE_URL=postgresql+psycopg2://${var.db_username}:${var.db_password}@${aws_db_instance.postgres.address}:${aws_db_instance.postgres.port}/${var.db_name}
 RDS_HOST=${aws_db_instance.postgres.address}
@@ -50,20 +51,20 @@ RDS_USER=${var.db_username}
 RDS_PASSWORD=${var.db_password}
 RDS_DB_NAME=${var.db_name}
 
-REDIS_URL=redis://${aws_elasticache_cluster.redis.cluster_id}:6379/0
-REDIS_HOST=${aws_elasticache_cluster.redis.cluster_id}
+REDIS_URL=redis://${aws_elasticache_cluster.redis.cache_nodes[0].address}:6379/0
+REDIS_HOST=${aws_elasticache_cluster.redis.cache_nodes[0].address}
 REDIS_PORT=6379
 
 AWS_REGION=${var.aws_region}
-S3_BUCKET_NAME=${aws_s3_bucket.questions_bucket.id}
+S3_BUCKET_NAME=${var.s3_bucket_name}
 DYNAMO_SUBMISSIONS_TABLE=${aws_dynamodb_table.submissions_log.name}
 DYNAMO_CRUD_TABLE_NAME=${aws_dynamodb_table.crud_actions_log.name}
 SQS_QUEUE_NAME=${aws_sqs_queue.submissions_queue.name}
 SQS_DLQ_NAME=${aws_sqs_queue.submissions_dlq.name}
 EOT
 
-              # 5. Criar servico systemd para o Worker Python
-              cat <<EOT | sudo tee /etc/systemd/system/sqlarena-worker.service
+# 5. Criar servico systemd para o Worker Python
+cat <<EOT | sudo tee /etc/systemd/system/sqlarena-worker.service
 [Unit]
 Description=SQLArena SQS Submission Worker
 After=network.target
@@ -81,12 +82,12 @@ RestartSec=5
 WantedBy=multi-user.target
 EOT
 
-              sudo systemctl daemon-reload
-              sudo systemctl enable sqlarena-worker.service
-              sudo systemctl restart sqlarena-worker.service
+sudo systemctl daemon-reload
+sudo systemctl enable sqlarena-worker.service
+sudo systemctl restart sqlarena-worker.service
 
-              echo "=== No Worker SQLArena inicializado com sucesso ==="
-              EOF
+echo "=== No Worker SQLArena inicializado com sucesso ==="
+EOF
   )
 
   tag_specifications {

@@ -15,33 +15,34 @@ resource "aws_launch_template" "web_lt" {
   }
 
   user_data = base64encode(<<-EOF
-              #!/bin/bash
-              set -e
-              echo "=== Inicializando no Web SQLArena (Frontend + Backend FastAPI) ==="
+#!/bin/bash
+set -e
+exec > >(tee -a /var/log/user_data.log /var/log/cloud-init-output.log) 2>&1
+echo "=== Inicializando no Web SQLArena (Frontend + Backend FastAPI) ==="
 
-              # 1. Atualizar SO e instalar dependencias basicas
-              sudo apt-get update -y
-              sudo DEBIAN_FRONTEND=noninteractive apt-get install -y git python3 python3-pip python3-venv curl libpq-dev
+# 1. Atualizar SO e instalar dependencias basicas
+sudo apt-get update -y
+sudo DEBIAN_FRONTEND=noninteractive apt-get install -y git python3 python3-pip python3-venv curl libpq-dev
 
-              # 2. Instalar Node.js LTS (para compilar frontend React)
-              curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
-              sudo apt-get install -y nodejs
+# 2. Instalar Node.js LTS (para compilar frontend React)
+curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
+sudo apt-get install -y nodejs
 
-              # 3. Clonar repositorio
-              sudo mkdir -p /opt/sqlarena
-              cd /opt
-              sudo rm -rf sqlarena
-              git clone -b ${var.github_branch} ${var.github_repo_url} /opt/sqlarena
-              cd /opt/sqlarena
+# 3. Clonar repositorio
+sudo mkdir -p /opt/sqlarena
+cd /opt
+sudo rm -rf sqlarena
+git clone -b ${var.github_branch} ${var.github_repo_url} /opt/sqlarena
+cd /opt/sqlarena
 
-              # 4. Criar virtualenv Python e instalar dependencias
-              python3 -m venv app/.venv
-              source app/.venv/bin/activate
-              pip install --upgrade pip
-              pip install -r app/requirements.txt
+# 4. Criar virtualenv Python e instalar dependencias
+python3 -m venv app/.venv
+source app/.venv/bin/activate
+pip install --upgrade pip
+pip install -r app/requirements.txt
 
-              # 5. Escrever arquivo de configuracao app/.env com recursos da AWS
-              cat <<EOT > app/.env
+# 5. Escrever arquivo de configuracao app/.env com recursos da AWS
+cat <<EOT > app/.env
 ENVIRONMENT=production
 APP_PORT=${var.app_port}
 SECRET_KEY=sqlarena-production-super-secret-key-32chars-min
@@ -55,29 +56,30 @@ RDS_USER=${var.db_username}
 RDS_PASSWORD=${var.db_password}
 RDS_DB_NAME=${var.db_name}
 
-REDIS_URL=redis://${aws_elasticache_cluster.redis.cluster_id}:6379/0
-REDIS_HOST=${aws_elasticache_cluster.redis.cluster_id}
+REDIS_URL=redis://${aws_elasticache_cluster.redis.cache_nodes[0].address}:6379/0
+REDIS_HOST=${aws_elasticache_cluster.redis.cache_nodes[0].address}
 REDIS_PORT=6379
 
 AWS_REGION=${var.aws_region}
-S3_BUCKET_NAME=${aws_s3_bucket.questions_bucket.id}
+S3_BUCKET_NAME=${var.s3_bucket_name}
 DYNAMO_SUBMISSIONS_TABLE=${aws_dynamodb_table.submissions_log.name}
 DYNAMO_CRUD_TABLE_NAME=${aws_dynamodb_table.crud_actions_log.name}
 SQS_QUEUE_NAME=${aws_sqs_queue.submissions_queue.name}
 SQS_DLQ_NAME=${aws_sqs_queue.submissions_dlq.name}
 EOT
 
-              # 6. Compilar o Frontend React (Vite SPA)
-              cd /opt/sqlarena/frontend
-              npm install
-              npm run build
+# 6. Compilar o Frontend React (Vite SPA)
+cd /opt/sqlarena/frontend
+export VITE_API_URL=/api
+npm install
+npm run build
 
-              # 7. Executar o seed inicial do banco (tabelas, categorias e 21 questoes no RDS/S3)
-              cd /opt/sqlarena
-              python app/database/seed.py || echo "[WARN] Seed ja executado ou aguardando readiness do RDS."
+# 7. Executar o seed inicial do banco (tabelas, categorias e 21 questoes no RDS/S3)
+cd /opt/sqlarena
+python app/database/seed.py || echo "[WARN] Seed ja executado ou aguardando readiness do RDS."
 
-              # 8. Criar servico systemd para a API FastAPI + Frontend
-              cat <<EOT | sudo tee /etc/systemd/system/sqlarena-web.service
+# 8. Criar servico systemd para a API FastAPI + Frontend
+cat <<EOT | sudo tee /etc/systemd/system/sqlarena-web.service
 [Unit]
 Description=SQLArena Web API and Frontend Service
 After=network.target
@@ -95,12 +97,12 @@ RestartSec=5
 WantedBy=multi-user.target
 EOT
 
-              sudo systemctl daemon-reload
-              sudo systemctl enable sqlarena-web.service
-              sudo systemctl restart sqlarena-web.service
+sudo systemctl daemon-reload
+sudo systemctl enable sqlarena-web.service
+sudo systemctl restart sqlarena-web.service
 
-              echo "=== No Web SQLArena inicializado com sucesso ==="
-              EOF
+echo "=== No Web SQLArena inicializado com sucesso ==="
+EOF
   )
 
   tag_specifications {

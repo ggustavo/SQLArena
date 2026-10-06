@@ -53,6 +53,10 @@ override.tf.json
 *_override.tf.json
 .terraformrc
 terraform.rc
+*.secrets.tfvars
+*secret*.tfvars
+credentials.auto.tfvars
+*.credentials.tfvars
 
 # Frontend (Node / Vite)
 frontend/node_modules/

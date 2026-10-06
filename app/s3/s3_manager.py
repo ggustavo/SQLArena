@@ -46,18 +46,29 @@ class S3Manager:
         self.bucket_name = bucket_name or os.getenv("S3_BUCKET_NAME", "sqlarena-questions-bucket")
         self.region_name = region_name or os.getenv("AWS_REGION", "us-east-1")
 
-        # Se AWS_ENDPOINT_URL estiver definido (ex: http://localhost:4566), usa local
-        self.endpoint_url = endpoint_url or os.getenv("AWS_ENDPOINT_URL", "http://localhost:4566")
+        # Se AWS_ENDPOINT_URL estiver definido e não vazio, usa local (Ministack/LocalStack)
+        raw_endpoint = endpoint_url if endpoint_url is not None else os.getenv("AWS_ENDPOINT_URL")
+        self.endpoint_url = raw_endpoint.strip() if raw_endpoint and raw_endpoint.strip() else None
 
-        # Credenciais (para ambiente local podem ser valores fictícios)
-        aws_access_key = os.getenv("AWS_ACCESS_KEY_ID", "test")
-        aws_secret_key = os.getenv("AWS_SECRET_ACCESS_KEY", "test")
+        # Credenciais: se não informadas ou vazias, deixa o boto3 usar IAM Instance Profile da EC2
+        aws_access_key = os.getenv("AWS_ACCESS_KEY_ID")
+        aws_secret_key = os.getenv("AWS_SECRET_ACCESS_KEY")
+        if aws_access_key and aws_access_key.strip():
+            aws_access_key = aws_access_key.strip()
+        else:
+            aws_access_key = None
+
+        if aws_secret_key and aws_secret_key.strip():
+            aws_secret_key = aws_secret_key.strip()
+        else:
+            aws_secret_key = None
 
         client_kwargs: Dict[str, Any] = {
             "region_name": self.region_name,
-            "aws_access_key_id": aws_access_key,
-            "aws_secret_access_key": aws_secret_key,
         }
+        if aws_access_key and aws_secret_key:
+            client_kwargs["aws_access_key_id"] = aws_access_key
+            client_kwargs["aws_secret_access_key"] = aws_secret_key
 
         # Configurações para funcionamento transparente com Ministack/LocalStack
         if self.endpoint_url:

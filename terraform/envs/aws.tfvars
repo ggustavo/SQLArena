@@ -1,33 +1,33 @@
-# Variáveis para deploy na AWS Real
-project_name   = "sqlarena"
-environment    = "prod"
-is_local       = false
-aws_region     = "us-east-1"
+# ==============================================================================
+# Configurações para Deploy no AWS Academy (Learner Lab)
+# ==============================================================================
+project_name      = "sqlarena"
+environment       = "academy"
+is_local          = false
+aws_region        = "us-east-1"
 
-# Deixe em branco se suas credenciais já estiverem configuradas via 'aws configure' ou variáveis de ambiente do SO
-aws_access_key = ""
-aws_secret_key = ""
-local_endpoint = ""
+# ------------------------------------------------------------------------------
+# As credenciais da AWS devem ser colocadas em 'terraform/credentials.auto.tfvars'
+# Esse arquivo está protegido pelo .gitignore e o Terraform o carrega automaticamente!
+# ------------------------------------------------------------------------------
+local_endpoint    = ""
 
-# RDS
-db_name        = "app_db"
-db_username    = "postgres"
-db_password    = "substitua_por_uma_senha_forte_em_producao"
+# Banco de Dados RDS PostgreSQL
+db_name           = "app_db"
+db_username       = "postgres"
+db_password       = "SqlArena2026MasterKey!"
 
-# EC2 (Máquina virtual limpa - Ubuntu 22.04 LTS ou Amazon Linux 2023)
+# EC2 e Launch Templates (Ubuntu 22.04 LTS em us-east-1 suportado pelo AWS Academy)
 ec2_instance_type = "t3.micro"
-ec2_ami           = "ami-0c7217cdde317cfec" # Exemplo: Ubuntu 22.04 LTS em us-east-1
+ec2_ami           = "ami-0c7217cdde317cfec"
 app_port          = 8000
 
-# SQS
+# Amazon SQS
 sqs_queue_name    = "sqlarena-submissions-queue"
 
-# S3 (Observação: em produção na AWS, buckets S3 devem ter nome globalmente único)
-s3_bucket_name    = "sqlarena-questions-bucket-prod"
+# Amazon S3 (Atenção: nome do bucket na AWS deve ser único globalmente)
+s3_bucket_name    = "sqlarena-questions-bucket-academy-gustavo"
 
-# DynamoDB
-dynamodb_table_name = "sqlarena-submissions-log"
+# Amazon DynamoDB
+dynamodb_table_name      = "sqlarena-submissions-log"
 dynamodb_crud_table_name = "sqlarena-crud-actions-log"
-
-
-

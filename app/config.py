@@ -25,11 +25,11 @@ class Settings(BaseSettings):
     REDIS_HOST: str = "localhost"
     REDIS_PORT: int = 16379
 
-    # AWS / Ministack
-    AWS_ENDPOINT_URL: Optional[str] = "http://localhost:4566"
+    # AWS / Ministack (nulos por padrão para AWS real/produção; app/.env local sobrescreve para Ministack)
+    AWS_ENDPOINT_URL: Optional[str] = None
     AWS_REGION: str = "us-east-1"
-    AWS_ACCESS_KEY_ID: str = "test"
-    AWS_SECRET_ACCESS_KEY: str = "test"
+    AWS_ACCESS_KEY_ID: Optional[str] = None
+    AWS_SECRET_ACCESS_KEY: Optional[str] = None
 
     # SQS
     SQS_QUEUE_NAME: str = "sqlarena-submissions-queue"
