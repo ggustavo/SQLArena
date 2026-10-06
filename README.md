@@ -1,318 +1,270 @@
-# SQLArena - Infraestrutura & Ambiente de Desenvolvimento
+# SQLArena - Plataforma de Ensino e Avaliação de SQL
 
-Este projeto foi estruturado para suportar o desenvolvimento e testes locais com **Ministack** (emulador de serviços AWS via Docker) e permitir a migração transparente de toda a infraestrutura para a **AWS real** utilizando **Terraform (Infraestrutura como Código - IaC)**.
+O **SQLArena** é uma plataforma distribuída, elástica e interativa para o ensino e prática de consultas SQL. Ela permite que instrutores cadastrem exercícios práticos e que alunos resolvam desafios com execução real em um banco de dados **PostgreSQL 16** isolado por schema, recebendo feedback instantâneo sobre acerto e desempenho.
+
+A arquitetura do sistema adota o padrão de **Single Page Application (SPA)** no frontend comunicando-se assincronamente com uma **API FastAPI**, orquestrada por mensageria com **Amazon SQS**, armazenamento de scripts no **Amazon S3**, cache e rate limit no **Redis**, persistência relacional no **AWS RDS PostgreSQL**, logs imutáveis no **Amazon DynamoDB** e **Workers em background** com motor de execução isolado (Sandbox).
 
 ---
 
-## 1. Estrutura do Projeto
+## 1. Arquitetura da Solução
 
 ```text
-SQLArena/
-├── ministack/                   # Configuração e persistência do emulador local
-│   ├── docker-compose.yml       # Orquestração do ministack
-│   └── data/                    # Dados locais persistidos (S3, logs, etc.)
-│
-├── terraform/                   # Infraestrutura como Código
-│   ├── providers.tf             # Configuração do provedor AWS e endpoints locais
-│   ├── variables.tf             # Variáveis de ambiente e configuração
-│   ├── outputs.tf               # Dados de saída (URLs de conexão, IDs de recursos)
-│   ├── s3.tf                    # Declaração do bucket S3 das questões
-│   ├── dynamodb.tf              # Declaração da tabela DynamoDB de logs de submissão
-│   ├── rds.tf                   # Declaração da instância do banco de dados (RDS PostgreSQL)
-│   ├── elasticache.tf           # Declaração do cluster Redis (ElastiCache)
-│   ├── ec2.tf                   # Declaração da máquina virtual e firewall (EC2)
-│   ├── sqs.tf                   # Declaração da fila principal e DLQ (SQS)
-│   └── envs/
-│       ├── local.tfvars         # Parâmetros para rodar apontando para o Ministack
-│       └── aws.tfvars           # Parâmetros para deploy na AWS de verdade
-│
-└── app/                         # Código da aplicação, módulos e configurações
-    ├── .env                     # Variáveis de ambiente ativas (ignorado pelo Git)
-    ├── .env.example             # Modelo documentado das variáveis de ambiente
-    ├── requirements.txt         # Dependências Python centralizadas
-    ├── backend/                 # Código da API backend
-    ├── s3/                      # Módulo gerenciador do Amazon S3
-    │   ├── __init__.py
-    │   └── s3_manager.py        # Upload, download, leitura e deleção de arquivos SQL
-    ├── sqs/                     # Módulo gerenciador do Amazon SQS
-    │   ├── __init__.py
-    │   └── queue_manager.py     # Funções de envio, consumo, purge e DLQ
-    ├── dynamodb/                # Módulo gerenciador do Amazon DynamoDB
-    │   ├── __init__.py
-    │   └── dynamo_manager.py    # Log imutável de execuções, histórico e erros
-    ├── testes/                  # Scripts executáveis de teste e validação
-        ├── __init__.py
-        ├── main_sqs.py          # Script de teste e ciclo de vida do SQS
-        ├── main_s3.py           # Script de teste e ciclo de vida do S3
-        └── main_dynamodb.py     # Script de teste e ciclo de vida do DynamoDB
-│
-└── frontend/                    # Single Page Application (React 19 + Vite 6 + Tailwind CSS v4)
-    ├── src/
-    │   ├── components/          # Componentes (Navbar, SqlEditor, RelationalDiagram, HistoryModal...)
-    │   ├── pages/               # Páginas (LoginPage, QuestionDashboard, ArenaPage, ProfessorPage...)
-    │   ├── services/            # Camada de serviços desacoplada (api, auth, questions, submissions, categories...)
-    │   └── data/                # Dados mockados para desenvolvimento frontend
-    ├── package.json
-    └── vite.config.js
+[ Aluno / Frontend React (Vite :5173) ]
+                     │
+                     ▼ (HTTP / JWT)
+         [ FastAPI Web API (:8000) ]
+            │              │
+            │ (Rate Limit) │ (Publica Submissão)
+            ▼              ▼
+     [ Redis (:16379) ]  [ Amazon SQS (:4566) ]
+                           │
+                           ▼ (Consome mensagem)
+                  [ Worker de Avaliação ]
+                           │
+         ┌─────────────────┼─────────────────┐
+         │                 │                 │
+         ▼                 ▼                 ▼
+[ PostgreSQL Sandbox ]   [ Redis Hash ]    [ RDS Metadata ]
+  (Executa em Schema      (Compara SHA-256    (Concede +10 XP
+   Isolado Read-Only)     com Gabarito O(1))  para inédito)
+                           │
+                           ▼
+                 [ Amazon DynamoDB ]
+                  (Log Imutável)
 ```
 
+### Componentes Principais:
+1. **Frontend SPA (`frontend/`):** React 19 + Tailwind CSS v4 + Monaco Editor, com atalhos de execução (`Ctrl + Enter`), histórico persistente em modal sem perda de contexto e visualização de schema relacional.
+2. **FastAPI Web API (`app/main.py` e `app/backend/`):** Autenticação JWT, CRUD de categorias N:N e questões, validação de rate limit (5s) e despacho assíncrono para a fila SQS.
+3. **Fila Amazon SQS (`sqlarena-submissions-queue`):** Desacopla a camada web do processamento pesado.
+4. **Worker Sandbox (`app/worker/`):** Consome a fila, executa as consultas no PostgreSQL dentro de schemas isolados (`pergunta_X`), em modo *Read-Only* e com `statement_timeout = 3000ms`.
+5. **Amazon S3 (`sqlarena-questions-bucket`):** Armazena os scripts SQL puros de cada questão (`schema.sql`, `data.sql`, `answer.sql`). Sem dependência de CSVs ou binários externos.
+6. **Redis / ElastiCache:** Rate limit global por aluno (5s) e cache do Hash SHA-256 do gabarito canônico para validação instantânea em O(1).
+7. **PostgreSQL / RDS:** Banco relacional para usuários, categorias N:N, questões e pontuações consolidadas.
+8. **Amazon DynamoDB:** Log imutável de submissões (`sqlarena-submissions-log`) e auditoria de ações (`sqlarena-crud-actions-log`).
+9. **Infraestrutura como Código (`terraform/`):** VPC, Subnets, Duplo Auto Scaling Group (ASG 1 para API e ASG 2 para Workers), ALB, RDS, ElastiCache, SQS, S3 e DynamoDB.
 
 ---
 
-## 2. Pré-requisitos & Instalação
+## 2. Pré-requisitos do Sistema
 
-### 1. Docker
-* Certifique-se de que o **Docker** (ou Docker Desktop no macOS/Windows) esteja instalado e em execução.
+* **Docker Desktop** (em execução) com suporte a Docker Compose.
+* **Python 3.11+** ou **3.12+** instalado.
+* **Node.js 18+** e **npm** instalados.
+* **Terraform CLI 1.5+** (opcional, para validação da infraestrutura IaC e deploy na nuvem).
 
 ---
 
-### 2. Terraform CLI
+## 3. Passo a Passo Completo: Executar a Aplicação Localmente
 
-Instale o Terraform de acordo com o seu sistema operacional:
+Siga os passos abaixo no **PowerShell** a partir da raiz do repositório (`C:\Users\Gustavo\Desktop\SQLArena`).
 
-#### Linux (Ubuntu / Debian)
-```bash
-sudo apt-get update && sudo apt-get install -y gnupg software-properties-common curl
-curl -fsSL https://apt.releases.hashicorp.com/gpg | sudo gpg --dearmor -o /usr/share/keyrings/hashicorp-archive-keyring.gpg
-echo "deb [signed-by=/usr/share/keyrings/hashicorp-archive-keyring.gpg] https://apt.releases.hashicorp.com $(lsb_release -cs) main" | sudo tee /etc/apt/sources.list.d/hashicorp.list
-sudo apt-get update && sudo apt-get install -y terraform
-```
+### Passo 1: Subir a Infraestrutura Emulada (Docker)
+Inicie os serviços do banco relacional PostgreSQL, cache Redis, emulador de serviços AWS (Ministack) e o painel StackPort:
 
-#### Linux (Fedora / RHEL / CentOS)
-```bash
-sudo dnf install -y dnf-plugins-core
-sudo dnf config-manager --add-repo https://rpm.releases.hashicorp.com/fedora/hashicorp.repo
-sudo dnf -y install terraform
-```
-
-#### macOS (via Homebrew)
-```bash
-brew tap hashicorp/tap
-brew install hashicorp/tap/terraform
-```
-
-#### Windows (via Winget ou Chocolatey)
 ```powershell
-# Via Winget:
-winget install HashiCorp.Terraform
-
-# Ou via Chocolatey:
-choco install terraform
+docker compose -f ministack/docker-compose.yml up -d
 ```
 
----
-
-### Validar a Instalação
-Em qualquer sistema operacional, abra um novo terminal e execute:
-```bash
-terraform version
-```
-
----
-
-## 3. Como Subir e Gerenciar o Ministack & StackPort
-
-O **Ministack** emula as APIs da AWS localmente e cria os containers dos serviços (PostgreSQL para o RDS e Redis para o ElastiCache). O **StackPort** é o painel web integrado para visualizar e interagir com todos os recursos AWS locais.
-
-### Iniciar o Ministack e o StackPort:
-```bash
-cd ministack
-docker compose up -d
-```
-
-### Verificar o status:
-```bash
-# Ver se os containers (ministack e stackport) estão rodando:
+Verifique se todos os containers estão ativos:
+```powershell
 docker ps
-
-# Acompanhar os logs em tempo real:
-docker compose logs -f
 ```
-
-* **Gateway AWS (Ministack):** `http://localhost:4566`
-* **Dashboard Web (StackPort):** `http://localhost:8080`
-
-### Parar os containers:
-```bash
-docker compose down
-```
+> Deverão estar rodando 4 containers: `sqlarena-postgres`, `sqlarena-redis`, `ministack` e `stackport`.
 
 ---
 
-## 4. Ciclo de Comandos do Terraform no Dia a Dia
+### Passo 2: Ativar o Ambiente Virtual Python e Instalar Dependências
+Se ainda não possuir o `.venv`, crie e ative:
 
-Os comandos a seguir são **idênticos em qualquer sistema operacional** (Linux, macOS ou Windows).
+```powershell
+# Criar o ambiente virtual (caso não exista):
+python -m venv app/.venv
 
-Navegue até o diretório `terraform/`:
-```bash
-cd terraform
-```
+# Permitir execução de scripts no PowerShell (se necessário):
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy RemoteSigned
 
-### 1. Inicialização (`init`)
-Baixa o provider oficial da AWS e prepara o diretório de trabalho:
-```bash
-terraform init
-```
+# Ativar o ambiente virtual:
+& app/.venv/Scripts/Activate.ps1
 
-### 2. Planejamento (`plan`)
-Mostra um resumo detalhado de tudo que será criado, modificado ou destruído sem aplicar nenhuma alteração:
-```bash
-terraform plan -var-file="envs/local.tfvars"
-```
-
-### 3. Aplicação (`apply`)
-Cria os recursos de fato (RDS, ElastiCache, EC2, SQS):
-```bash
-terraform apply -var-file="envs/local.tfvars"
-```
-*(Digite `yes` quando solicitado, ou adicione a flag `-auto-approve`)*
-
-### 4. Destruição (`destroy`)
-Para remover todos os recursos criados e resetar o ambiente:
-```bash
-terraform destroy -var-file="envs/local.tfvars"
-```
-
----
-
-## 5. Configuração do Ambiente Python (Aplicação & Testes)
-
-Para executar os scripts da pasta `app/` (como o teste do SQS ou o desenvolvimento do backend):
-
-### 1. Criar o Ambiente Virtual (`venv`)
-Na raiz do projeto, execute:
-```bash
-python -m venv .venv
-```
-
-### 2. Ativar o Ambiente Virtual
-
-* **Linux / macOS:**
-  ```bash
-  source .venv/bin/activate
-  ```
-
-* **Windows (PowerShell):**
-  ```powershell
-  .venv\Scripts\Activate.ps1
-  ```
-  *(Se o PowerShell bloquear a execução de scripts, rode antes uma vez: `Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser`)*
-
-* **Windows (Prompt de Comando / CMD):**
-  ```cmd
-  .venv\Scripts\activate.bat
-  ```
-
----
-
-### 3. Instalar as Dependências
-Com o ambiente virtual ativado, instale os pacotes necessários:
-```bash
+# Instalar dependências:
 pip install -r app/requirements.txt
 ```
 
 ---
 
-### 4. Configurar as Variáveis de Ambiente
-O projeto já conta com o arquivo [`app/.env`](app/.env) configurado para desenvolvimento local. Caso precise recriá-lo a partir do modelo:
+### Passo 3: Executar o Seed Inicial de Dados
+O script de seed cria as tabelas no PostgreSQL (RDS), cadastra as 12 categorias, usuários de teste, 21 questões reais com scripts no S3, inicializa os schemas de sandbox no PostgreSQL, computa os hashes SHA-256 dos gabaritos no Redis e provisiona tabelas no DynamoDB e fila no SQS:
 
-* **Linux / macOS:**
-  ```bash
-  cp app/.env.example app/.env
-  ```
-* **Windows (PowerShell):**
-  ```powershell
-  Copy-Item app\.env.example app\.env
-  ```
+```powershell
+$env:PYTHONPATH="."
+& app/.venv/Scripts/python.exe app/database/seed.py
+```
 
 ---
 
-### 5. Executar os Testes (SQS, S3 & DynamoDB)
-Com o Ministack em execução e a infraestrutura aplicada pelo Terraform, execute os scripts de teste contidos na pasta `app/testes/`:
+### Passo 4: Iniciar o Backend FastAPI (Terminal 1)
+Em um terminal dedicado com o `.venv` ativo:
 
-```bash
-# Teste de ponta a ponta do Amazon SQS (envio, consumo, atributos, DLQ)
-python app/testes/main_sqs.py
+```powershell
+# Na raiz do projeto:
+uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+```
+> A API estará disponível em:
+> * Documentação Interativa (Swagger): **[http://localhost:8000/docs](http://localhost:8000/docs)**
+> * Endpoint de Saúde: **[http://localhost:8000/api/health](http://localhost:8000/api/health)**
 
-# Teste de ponta a ponta do Amazon S3 (upload schema/data/answer, bootstrapping, deleção)
+---
+
+### Passo 5: Iniciar o Worker SQS (Terminal 2)
+Abra um **segundo terminal**, ative o `.venv` e inicie o Worker de processamento assíncrono:
+
+```powershell
+& app/.venv/Scripts/Activate.ps1
+$env:PYTHONPATH="."
+python app/worker/main.py
+```
+> O Worker ficará em loop consumindo mensagens da fila `sqlarena-submissions-queue`. Conforme os alunos enviarem códigos na Arena, os logs de validação, hash e atribuição de XP aparecerão aqui em tempo real.
+
+---
+
+### Passo 6: Iniciar o Frontend React (Terminal 3)
+Abra um **terceiro terminal**, acesse a pasta `frontend` e inicie o servidor Vite:
+
+```powershell
+cd frontend
+npm run dev
+```
+> A aplicação web estará acessível em: **[http://localhost:5173](http://localhost:5173)**
+
+---
+
+## 4. Credenciais de Acesso & Contas de Teste
+
+O seed provisiona automaticamente duas contas prontas para uso:
+
+| Perfil | Email | Senha | Funcionalidades |
+| :--- | :--- | :--- | :--- |
+| **Aluno** | `aluno@sqlarena.com` | `123456` | Visualizar Dashboard, resolver questões na Arena, rodar com `Ctrl+Enter`, ver histórico e pontuar XP |
+| **Instrutor** | `instrutor@sqlarena.com` | `123456` | Painel de criação de questões, validação de `ORDER BY`, categorias N:N e auditoria |
+
+---
+
+## 5. Dashboards e Portas do Sistema
+
+| Serviço | Endereço Local | Descrição |
+| :--- | :--- | :--- |
+| **Frontend SPA** | `http://localhost:5173` | Interface React + Tailwind CSS v4 |
+| **Backend API Docs** | `http://localhost:8000/docs` | Documentação Swagger interativa do FastAPI |
+| **StackPort GUI** | `http://localhost:8080` | Interface visual para navegar nos buckets S3 e filas SQS |
+| **PostgreSQL RDS** | `localhost:15432` | Banco relacional central (`app_db` / user `postgres`) |
+| **Redis Cache** | `localhost:16379` | Cache de rate limit e hashes SHA-256 |
+| **Ministack AWS Gateway** | `http://localhost:4566` | Emulador das APIs S3, SQS e DynamoDB |
+
+---
+
+## 6. Execução da Suíte de Testes Automatizados
+
+O projeto inclui testes de unidade e ponta a ponta (E2E) cobrindo API, SQS, Worker e banco:
+
+```powershell
+# Com o .venv ativo e a infraestrutura Docker rodando:
+$env:PYTHONPATH="."
+pytest app/testes/test_api.py app/testes/test_worker_e2e.py app/testes/test_e2e_full.py -v
+```
+
+Para rodar os testes individuais dos módulos de serviço AWS:
+```powershell
 python app/testes/main_s3.py
-
-# Teste de ponta a ponta do Amazon DynamoDB (gravação de logs, polling, histórico via GSI)
+python app/testes/main_sqs.py
 python app/testes/main_dynamodb.py
 ```
 
-
 ---
 
-### 6. Painel Visual de Recursos AWS (StackPort GUI)
+## 7. Como Desligar e Destruir o Ambiente (Teardown)
 
-O **[StackPort](https://github.com/DaviReisVieira/stackport)** é gerenciado 100% via Docker Compose junto com o Ministack. Para visualizar e interagir com os recursos emulados localmente de forma gráfica:
+Quando desejar encerrar a execução e resetar todo o ambiente de desenvolvimento:
 
-* **URL de Acesso:** **[http://localhost:8080](http://localhost:8080)**
-* **Funcionalidades na Interface:**
-  * Navegar pelos buckets S3 e visualizar os scripts SQL salvos;
-  * Inspecionar filas SQS, mensagens recebidas e payloads em tempo real;
-  * Acompanhar status dos serviços locais sem necessidade de comandos adicionais no terminal.
+1. **Parar os servidores em execução nos terminais:**
+   Pressione `Ctrl + C` nos terminais do FastAPI, do Worker e do Frontend.
 
-
-
-
-
----
-
-## 6. Como Funciona o EC2 (Local vs Nuvem)
-
-### 1. No Ambiente Local (Ministack)
-No desenvolvimento local, o Ministack **emula a API do EC2** (gerando IDs e metadados para que o Terraform funcione sem erros), mas **não sobe uma máquina virtual**:
-* Os containers Docker ativos são os que exigem serviços de dados reais: **RDS (Postgres)**, **ElastiCache (Redis)** e o gateway do **Ministack (SQS/APIs)**.
-* **O seu ambiente de execução do backend é a sua própria máquina local:** você roda a sua aplicação no seu terminal com o `.venv` ativo, conectando-se aos serviços do Docker através das portas expostas (`localhost:15432` para banco, `localhost:16379` para redis e `localhost:4566` para SQS).
-
----
-
-### 2. Na AWS Real (Nuvem)
-Quando você aplicar o Terraform na nuvem da Amazon, a AWS criará um servidor virtual real (instância EC2). Você poderá acessar o terminal dessa máquina das seguintes formas:
-
-
-#### Opção A: Conexão via SSH (Tradicional)
-Para conectar via SSH padrão, certifique-se de ter uma chave `.pem` configurada:
-
-1. **Ajustar as permissões da chave privada (apenas Linux/macOS):**
-   ```bash
-   chmod 400 minha-chave.pem
+2. **Destruir os containers Docker e remover os volumes de dados:**
+   ```powershell
+   docker compose -f ministack/docker-compose.yml down -v
    ```
-
-2. **Conectar pelo terminal usando o IP público:**
-   *(O IP público é exibido pelo Terraform no output `ec2_public_ip` após o `terraform apply`)*
-   ```bash
-   # Se a imagem for Ubuntu:
-   ssh -i /caminho/para/minha-chave.pem ubuntu@<IP_PUBLICO_DA_EC2>
-
-   # Se a imagem for Amazon Linux 2023:
-   ssh -i /caminho/para/minha-chave.pem ec2-user@<IP_PUBLICO_DA_EC2>
-   ```
-
-> [!NOTE]
-> Para usar SSH na AWS real, lembre-se de associar o parâmetro `key_name` na declaração da `aws_instance` no arquivo `terraform/ec2.tf`.
+   > A flag `-v` remove os volumes associados, garantindo que nenhum resíduo de banco ou cache permaneça armazenado.
 
 ---
 
-#### Opção B: EC2 Instance Connect (Navegador ou CLI)
-Permite conectar sem precisar gerenciar arquivos de chave `.pem`:
+## 8. Estrutura de Diretórios
 
-* **Pelo Console da AWS:**
-  Acesse **EC2** > **Instâncias** > selecione sua máquina > clique no botão **Conectar** > aba **EC2 Instance Connect** > **Conectar**.
-
-* **Pelo terminal (com AWS CLI instalada):**
-  ```bash
-  aws ec2-instance-connect ssh --instance-id <ID_DA_INSTANCIA>
-  ```
-
----
-
-#### Opção C: AWS Systems Manager (SSM Session Manager - Mais Seguro)
-A forma recomendada em produção pela AWS, pois **não exige liberar a porta 22 (SSH) na internet** nem gerenciar chaves:
-
-```bash
-aws ssm start-session --target <ID_DA_INSTANCIA>
+```text
+SQLArena/
+├── ministack/                   # Configuração e persistência do emulador local
+│   ├── docker-compose.yml       # Orquestração do Postgres, Redis, Ministack e StackPort
+│   └── data/                    # Dados locais persistidos
+│
+├── terraform/                   # Infraestrutura como Código (IaC)
+│   ├── providers.tf             # Configuração do provedor AWS
+│   ├── vpc.tf                   # Rede, subnets públicas/privadas e gateways
+│   ├── alb.tf                   # Application Load Balancer
+│   ├── asg.tf                   # Auto Scaling Group da Camada Web (API)
+│   ├── worker_asg.tf            # Auto Scaling Group da Camada de Workers
+│   ├── rds.tf                   # Instância PostgreSQL RDS
+│   ├── elasticache.tf           # Cluster Redis ElastiCache
+│   ├── s3.tf                    # Bucket para scripts das questões
+│   ├── sqs.tf                   # Fila principal de submissões e Dead Letter Queue (DLQ)
+│   ├── dynamodb.tf              # Tabelas de histórico e auditoria
+│   └── envs/                    # Variáveis para local (local.tfvars) e AWS (aws.tfvars)
+│
+├── app/                         # Backend, Microsserviços e Banco
+│   ├── main.py                  # Ponto de entrada unificado da aplicação FastAPI
+│   ├── redis_client.py          # Cliente gerenciador do Redis (hashes e rate limit)
+│   ├── backend/                 # API FastAPI com routers modularizados
+│   │   ├── main.py              # Exporta a aplicação web
+│   │   └── routers/             # Endpoints (auth, questions, submissions, categories, audit)
+│   ├── database/                # Conexão SQLAlchemy, modelos relacionais e seed
+│   │   ├── connection.py        # Pool de conexões RDS
+│   │   ├── models.py            # Modelos (User, Question, Category, Submission)
+│   │   ├── seed.py              # Script populador completo com 21 questões reais
+│   │   └── initial_data.json    # Dados das 21 questões e scripts SQL
+│   ├── worker/                  # Serviço Worker assíncrono
+│   │   ├── main.py              # Inicializador do Worker de consumo da fila
+│   │   └── worker_service.py    # Motor de execução segura em Sandbox PostgreSQL
+│   ├── s3/                      # Gerenciador do Amazon S3 (upload/download scripts)
+│   ├── sqs/                     # Gerenciador do Amazon SQS (envio, recepção e purge)
+│   ├── dynamodb/                # Gerenciador do Amazon DynamoDB (logs imutáveis)
+│   └── testes/                  # Suíte de testes unitários e de integração
+│
+└── frontend/                    # Single Page Application (React 19 + Vite 6 + Tailwind CSS v4)
+    ├── src/
+    │   ├── components/          # Componentes (Navbar, SqlEditor, RelationalDiagram, HistoryModal...)
+    │   ├── pages/               # Páginas (LoginPage, QuestionDashboard, ArenaPage, ProfessorPage...)
+    │   └── services/            # Camada de serviços HTTP conectada à API FastAPI
+    └── package.json
 ```
 
+---
+
+## 9. Deploy na Nuvem AWS via Terraform
+
+Para provisionar a infraestrutura completa na conta AWS real:
+
+```powershell
+cd terraform
+
+# Inicializar os provedores:
+terraform init
+
+# Visualizar o plano de recursos que serão criados:
+terraform plan -var-file="envs/aws.tfvars"
+
+# Aplicar o provisionamento na AWS:
+terraform apply -var-file="envs/aws.tfvars"
+```
+
+Para destruir os recursos na AWS ao concluir:
+```powershell
+terraform destroy -var-file="envs/aws.tfvars"
+```

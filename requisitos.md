@@ -213,13 +213,61 @@ O frontend foi desenvolvido com foco em usabilidade e performance, eliminando la
 
 O frontend comunica-se exclusivamente através da camada de serviços em `frontend/src/services/`:
 
-| Arquivo de Serviço | Responsabilidade | Endpoint Backend Futuro |
+| Arquivo de Serviço | Responsabilidade | Endpoint Backend Ativo |
 | :--- | :--- | :--- |
-| `api.js` | Instância central do Axios com flag `USE_MOCK` e JWT Interceptor | Base URL da API |
-| `authService.js` | Autenticação por email e senha e gestão de sessão | `POST /auth/login` |
-| `categoryService.js` | Listagem de categorias pré-definidas | `GET /categories` |
-| `questionService.js` | Listagem, detalhes e cadastro de questões com validação de `ORDER BY` | `GET /questions`, `POST /questions` |
-| `submissionService.js` | Validação de Rate Limit (5s), envio de submissão, polling e histórico persistente | `POST /submissions`, `GET /submissions/{id}/status` |
-| `auditService.js` | Registro local de auditoria de operações | `GET /audit/actions` |
+| `api.js` | Instância central do Axios com flag `USE_MOCK = false` e interceptor JWT | `http://localhost:8000/api` |
+| `authService.js` | Autenticação por email e senha, obtenção de JWT e gestão de sessão | `POST /auth/login` |
+| `categoryService.js` | Listagem das 12 categorias pré-definidas em ordem alfabética | `GET /categories` |
+| `questionService.js` | Listagem com filtros, detalhe de questão e criação com validação de `ORDER BY` | `GET /questions`, `GET /questions/{id}`, `POST /questions` |
+| `submissionService.js` | Envio de submissões para fila SQS, polling assíncrono de status e histórico | `POST /submissions`, `GET /submissions/{id}/status`, `GET /submissions/history` |
+| `auditService.js` | Consulta aos logs de auditoria imutáveis persistidos no DynamoDB | `GET /audit/actions` |
 
-Para conectar a aplicação ao backend real em FastAPI, basta alternar a constante `USE_MOCK = false` em `src/services/api.js`.
+A constante `USE_MOCK` em `src/services/api.js` está definida como `false` por padrão, conectando o frontend diretamente à API FastAPI.
+
+---
+
+## 12. Matriz de Rastreabilidade e Conformidade dos Requisitos
+
+| Requisito | Descrição | Status | Componentes / Arquivos de Implementação |
+| :--- | :--- | :---: | :--- |
+| **REQ-01** | Banco relacional central para metadados, categorias N:N, questões e pontuações | **Atendido (100%)** | `app/database/models.py`, `app/database/connection.py`, `app/database/seed.py`, PostgreSQL (RDS 15432) |
+| **REQ-02** | 12 categorias pré-definidas com relação N:N (`question_categories`) | **Atendido (100%)** | `app/database/models.py`, `app/database/seed.py`, `app/backend/routers/categories.py` |
+| **REQ-03** | Armazenamento de questões exclusivamente em scripts SQL puros (`schema.sql`, `data.sql`, `answer.sql`) no S3 | **Atendido (100%)** | `app/s3/s3_manager.py`, `app/database/seed.py`, `app/backend/routers/questions.py` |
+| **REQ-04** | Obrigatoriedade de `ORDER BY` na resposta oficial (`answer.sql`) validada antes da publicação | **Atendido (100%)** | `app/backend/routers/questions.py`, `app/database/seed.py`, `frontend/src/pages/ProfessorPage.jsx` |
+| **REQ-05** | Cache Redis para rate limit (5s) e hash SHA-256 canônico do gabarito para comparação O(1) | **Atendido (100%)** | `app/redis_client.py`, `app/backend/routers/submissions.py`, `app/worker/worker_service.py` |
+| **REQ-06** | Fila Amazon SQS (`sqlarena-submissions-queue`) desacoplando a API dos Workers | **Atendido (100%)** | `app/sqs/queue_manager.py`, `app/backend/routers/submissions.py`, `app/worker/worker_service.py` |
+| **REQ-07** | Workers em background com motor PostgreSQL 16 isolado por schema (`pergunta_X`), Read-Only e timeout de 3s | **Atendido (100%)** | `app/worker/worker_service.py`, `app/worker/main.py`, PostgreSQL Sandbox |
+| **REQ-08** | Sistema de pontuação: +10 XP para acertos inéditos consolidados no banco RDS | **Atendido (100%)** | `app/worker/worker_service.py`, `app/database/models.py` (coluna `score_xp` em `users`) |
+| **REQ-09** | Log imutável de submissões e ações administrativas no Amazon DynamoDB | **Atendido (100%)** | `app/dynamodb/dynamo_manager.py`, `app/worker/worker_service.py`, `app/backend/routers/questions.py` |
+| **REQ-10** | Frontend SPA 100% responsivo, Monaco Editor com atalho `Ctrl+Enter`, histórico dinâmico sem perda de contexto | **Atendido (100%)** | `frontend/src/` (React 19 + Vite 6 + Tailwind CSS v4 + Monaco Editor) |
+| **REQ-11** | Infraestrutura como Código (Terraform) cobrindo VPC, Duplo ASG, ALB, RDS, ElastiCache, S3, SQS e DynamoDB | **Atendido (100%)** | `terraform/*.tf`, `terraform/worker_asg.tf`, `terraform/alb.tf`, `terraform/asg.tf` |
+
+---
+
+## 13. Guia de Verificação e Validação Manual
+
+Para auditar e testar manualmente cada requisito de ponta a ponta:
+
+1. **Subida da Infraestrutura Docker:**
+   ```powershell
+   docker compose -f ministack/docker-compose.yml up -d
+   ```
+2. **Execução do Seed de Dados:**
+   ```powershell
+   $env:PYTHONPATH="."; & app/.venv/Scripts/python.exe app/database/seed.py
+   ```
+   *Verificação:* O seed deve criar as 12 categorias, usuários de teste, 21 questões com scripts no S3, schemas isolados no PostgreSQL e hashes no Redis.
+3. **Inicialização do Backend e Worker:**
+   * Terminal 1: `uvicorn app.main:app --reload --host 0.0.0.0 --port 8000`
+   * Terminal 2: `python app/worker/main.py`
+4. **Inicialização do Frontend:**
+   * Terminal 3: `cd frontend; npm run dev`
+5. **Cenários de Teste na Interface (`http://localhost:5173`):**
+   * **Cenário A - Autenticação:** Fazer login com `aluno@sqlarena.com` / `123456`.
+   * **Cenário B - Mural & Filtros:** Testar filtro de categorias e status no Dashboard.
+   * **Cenário C - Resolução Correta (Arena):** Entrar em uma questão, executar a query correta com `Ctrl + Enter`. Verificar no terminal do Worker o processamento da mensagem da SQS, comparação de hash SHA-256 no Redis, atualização do status para `ACCEPTED` no frontend e ganho de +10 XP no perfil.
+   * **Cenário D - Rate Limit (5s):** Submeter duas vezes em menos de 5 segundos e verificar o bloqueio amigável com contagem regressiva.
+   * **Cenário E - Erro de Sintaxe:** Digitar uma query inválida e verificar a exibição do erro nativo retornado pelo PostgreSQL.
+   * **Cenário F - Tentativa Incorreta (`WRONG_ANSWER`):** Executar um `SELECT` com dados divergentes e verificar a resposta sem pontuação extra.
+   * **Cenário G - Histórico:** Abrir o modal de histórico na Navbar e clicar em "Carregar no Editor" em uma tentativa passada.
+   * **Cenário H - Painel do Instrutor:** Logar como `instrutor@sqlarena.com` / `123456`, acessar a página de criação de questões e testar a obrigatoriedade da cláusula `ORDER BY` no gabarito.
