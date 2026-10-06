@@ -52,7 +52,7 @@ pip install -r app/requirements.txt
 cat <<EOT > app/.env
 ENVIRONMENT=production
 SANDBOX_DATABASE_URL=postgresql://sandbox:sandboxpass@localhost:5432/sandbox_db
-BACKEND_INTERNAL_URL=http://${aws_lb.alb.dns_name}
+BACKEND_INTERNAL_URL=http://${aws_lb.api_alb.dns_name}
 INTERNAL_API_KEY=sqlarena-internal-service-secret-key-32chars
 
 AWS_REGION=${var.aws_region}
