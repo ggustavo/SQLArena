@@ -15,6 +15,8 @@ from app.database.session import Base, engine, SessionLocal
 from app.database.models import User, Category, Question, question_categories, UserSolvedQuestion
 from app.auth.security import get_password_hash
 from app.s3.s3_manager import S3Manager
+from app.dynamodb.dynamo_manager import DynamoDBManager
+from app.sqs.queue_manager import SQSQueueManager
 from app.cache.redis_client import redis_client
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -199,6 +201,22 @@ def seed_database():
             logger.info("[✓] Sequência questions_id_seq sincronizada com sucesso.")
         except Exception as e:
             logger.warning(f"Não foi possível sincronizar sequence questions_id_seq: {e}")
+
+        # 8. Garante tabelas do DynamoDB prontas
+        try:
+            dynamo = DynamoDBManager()
+            dynamo.ensure_tables_exist()
+            logger.info("[✓] Tabelas DynamoDB verificadas/criadas com sucesso.")
+        except Exception as e:
+            logger.warning(f"Aviso ao inicializar DynamoDB no seed: {e}")
+
+        # 9. Garante filas SQS prontas
+        try:
+            sqs = SQSQueueManager()
+            sqs.ensure_queues_exist()
+            logger.info("[✓] Filas SQS verificadas/criadas com sucesso.")
+        except Exception as e:
+            logger.warning(f"Aviso ao inicializar SQS no seed: {e}")
 
     except Exception as e:
         db.rollback()

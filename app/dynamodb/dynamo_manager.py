@@ -220,6 +220,10 @@ class DynamoDBManager:
             logger.info(f"Log de submissão #{submission_id} consolidado no DynamoDB.")
             return item
         except ClientError as e:
+            if e.response.get("Error", {}).get("Code") == "ResourceNotFoundException":
+                self.ensure_table_exists()
+                self.table.put_item(Item=item)
+                return item
             logger.error(f"Erro ao salvar log de submissão #{submission_id}: {e}")
             raise
 
@@ -270,6 +274,16 @@ class DynamoDBManager:
             logger.info(f"Submissão #{submission_id} atualizada com status '{status}'.")
             return response.get("Attributes", {})
         except ClientError as e:
+            if e.response.get("Error", {}).get("Code") == "ResourceNotFoundException":
+                self.ensure_table_exists()
+                response = self.table.update_item(
+                    Key={"submission_id": sub_id},
+                    UpdateExpression=update_expr,
+                    ExpressionAttributeNames=expr_names,
+                    ExpressionAttributeValues=expr_values,
+                    ReturnValues="ALL_NEW",
+                )
+                return response.get("Attributes", {})
             logger.error(f"Erro ao atualizar submissão #{submission_id}: {e}")
             raise
 
@@ -349,6 +363,9 @@ class DynamoDBManager:
             )
             return response.get("Items", [])
         except ClientError as e:
+            if e.response.get("Error", {}).get("Code") == "ResourceNotFoundException":
+                self.ensure_table_exists()
+                return []
             logger.error(f"Erro ao listar submissões do aluno #{student_id}: {e}")
             raise
 

@@ -6,6 +6,7 @@ from app.main import app
 from app.worker.main import SubmissionWorker
 from app.sqs.queue_manager import SQSQueueManager
 from app.cache.redis_client import redis_client
+from app.dynamodb.dynamo_manager import DynamoDBManager
 
 client = TestClient(app)
 
@@ -20,6 +21,7 @@ def test_full_student_frontend_flow():
     6. Polling do status via GET /api/submissions/{id}/status
     7. Verificação do histórico via GET /api/submissions/history
     """
+    DynamoDBManager().ensure_tables_exist()
     # 1. Login
     login_resp = client.post("/api/auth/login", json={
         "email": "aluno@sqlarena.com",
