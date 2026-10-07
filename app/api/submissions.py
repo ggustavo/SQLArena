@@ -89,6 +89,9 @@ def submit_query(
             detail=f"Questão #{qid} não encontrada."
         )
 
+    if q.status != "PUBLISHED":
+        raise HTTPException(status_code=403, detail="Questão indisponível para submissões.")
+
     submission_id = f"sub_{uuid.uuid4().hex[:12]}"
     now_iso = datetime.now(timezone.utc).isoformat()
 

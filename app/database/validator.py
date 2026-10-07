@@ -180,12 +180,16 @@ class QuestionValidator:
         """Remove o schema da questão ao ser excluída."""
         schema_name = f"pergunta_{question_id}"
         db_url = settings.DATABASE_URL.replace("postgresql+psycopg2://", "postgresql://")
+        conn = None
         try:
             conn = psycopg2.connect(db_url)
             conn.autocommit = True
             with conn.cursor() as cur:
                 cur.execute(sql.SQL("DROP SCHEMA IF EXISTS {} CASCADE;").format(sql.Identifier(schema_name)))
-            conn.close()
             logger.info(f"[✓] Schema '{schema_name}' removido do banco.")
         except Exception as e:
             logger.warning(f"Erro ao remover schema '{schema_name}': {e}")
+            raise
+        finally:
+            if conn:
+                conn.close()

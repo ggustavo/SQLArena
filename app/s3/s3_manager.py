@@ -320,7 +320,7 @@ class S3Manager:
         Remove todos os arquivos associados a uma questão do S3 (schema.sql, data.sql, answer.sql).
         Retorna o número de arquivos removidos.
         """
-        prefix = self._question_key_prefix(question_id)
+        prefix = self._question_key_prefix(question_id) + "/"
         files = self.list_files(prefix=prefix)
         if not files:
             logger.info(f"Nenhum arquivo encontrado para a questão #{question_id} no S3.")
@@ -332,6 +332,8 @@ class S3Manager:
                 Bucket=self.bucket_name,
                 Delete={"Objects": delete_payload},
             )
+            if response.get("Errors"):
+                raise RuntimeError(f"Falha parcial ao excluir arquivos da questão #{question_id}.")
             deleted_count = len(response.get("Deleted", []))
             logger.info(f"Removidos {deleted_count} arquivos da questão #{question_id} do S3.")
             return deleted_count

@@ -1,6 +1,7 @@
-from typing import List, Optional, Any, Dict
+import logging
+from typing import List, Optional, Any, Dict, Literal
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.orm import Session
 from app.database.session import get_db
 from app.database.models import Question, Category, User, UserSolvedQuestion
@@ -11,14 +12,15 @@ from app.cache.redis_client import redis_client
 from app.database.validator import QuestionValidator, QuestionValidationError
 
 router = APIRouter(prefix="/questions", tags=["Questões"])
+logger = logging.getLogger(__name__)
 
 s3_manager = S3Manager()
 dynamo_manager = DynamoDBManager()
 
 class QuestionCreateRequest(BaseModel):
-    title: str
-    difficulty: str = "Médio"
-    categories: List[str] = []
+    title: str = Field(min_length=1, max_length=200)
+    difficulty: Literal["Fácil", "Médio", "Difícil"] = "Médio"
+    categories: List[str] = Field(default_factory=list)
     category: Optional[str] = None
     description: str = ""
     schemaSql: str = ""
@@ -26,6 +28,13 @@ class QuestionCreateRequest(BaseModel):
     answerSql: str = ""
     sampleTables: Optional[List[Dict[str, Any]]] = None
     expectedColumns: Optional[List[str]] = None
+
+    @field_validator("title")
+    @classmethod
+    def validate_title(cls, value):
+        if not value.strip():
+            raise ValueError("O título não pode estar vazio.")
+        return value.strip()
 
 @router.get("")
 def list_questions(
@@ -144,7 +153,7 @@ def create_question(
     new_q = Question(
         title=payload.title,
         difficulty=payload.difficulty or "Médio",
-        status="PUBLISHED",
+        status="READY",
         description=payload.description or "",
         schema_sql=payload.schemaSql or "",
         sample_tables=payload.sampleTables or [],
@@ -154,10 +163,11 @@ def create_question(
 
     # Associa categorias
     cat_names = payload.categories or ([payload.category] if payload.category else ["Filtragem"])
-    for c_name in cat_names:
+    for c_name in dict.fromkeys(cat_names):
         c = db.query(Category).filter(Category.name == c_name).first()
-        if c:
-            new_q.categories.append(c)
+        if not c:
+            raise HTTPException(status_code=400, detail=f"Categoria desconhecida: {c_name}")
+        new_q.categories.append(c)
 
     db.add(new_q)
     db.flush()
@@ -186,26 +196,31 @@ def create_question(
     # 3. Enriquece os dados com os resultados validados
     new_q.expected_hash = val_result["expected_hash"]
     new_q.expected_columns = val_result["expected_columns"]
-    if not new_q.sample_tables:
-        new_q.sample_tables = val_result["sample_tables"]
+    new_q.sample_tables = val_result["sample_tables"]
 
-    db.commit()
-    db.refresh(new_q)
-
-    # 4. Atualiza o Hash no Redis e invalida caches de lista
-    redis_client.set_answer_hash(new_q.id, new_q.expected_hash)
-    redis_client.invalidate_questions_cache(new_q.id)
-
-    # 5. Upload dos scripts no S3
+    # O registro só fica visível após os três scripts estarem disponíveis.
+    question_id = new_q.id
     try:
         s3_manager.upload_question_sql_files(
-            question_id=new_q.id,
+            question_id=question_id,
             schema_sql=payload.schemaSql or "-- Sem schema\n",
             data_sql=payload.dataSql or "-- Sem dados\n",
             answer_sql=payload.answerSql
         )
-    except Exception as e:
-        logger.warning(f"Aviso ao salvar scripts no S3 para questão #{new_q.id}: {e}")
+        db.commit()
+    except Exception:
+        db.rollback()
+        logger.exception("Falha ao persistir questão #%s", question_id)
+        for cleanup in (s3_manager.delete_question_files, QuestionValidator.drop_question_schema):
+            try:
+                cleanup(question_id)
+            except Exception:
+                logger.exception("Falha na limpeza da questão #%s", question_id)
+        raise HTTPException(status_code=503, detail="Não foi possível salvar a questão. Tente novamente.")
+
+    db.refresh(new_q)
+    redis_client.invalidate_questions_cache(new_q.id)
+    redis_client.set_answer_hash(new_q.id, new_q.expected_hash)
 
     # 6. Auditoria no DynamoDB
     try:
@@ -216,7 +231,7 @@ def create_question(
             details={"title": new_q.title, "difficulty": new_q.difficulty, "expected_hash": new_q.expected_hash}
         )
     except Exception:
-        pass
+        logger.exception("Falha na auditoria CREATE_EXERCISE #%s", new_q.id)
 
     cats = sorted([c.name for c in new_q.categories], key=lambda x: x.lower())
     return {
@@ -240,26 +255,25 @@ def delete_question(
     db: Session = Depends(get_db),
     user: User = Depends(require_instructor)
 ):
-    """Exclui atomicamente uma questão do RDS, do S3, limpa schema e invalida cache."""
+    """Exclui recursos; DELETING permite retomar uma limpeza parcial."""
     q = db.query(Question).filter(Question.id == question_id).first()
     if not q:
         raise HTTPException(status_code=404, detail="Questão não encontrada.")
 
-    # Remove o schema sandbox no PostgreSQL
-    QuestionValidator.drop_question_schema(question_id)
-
-    # Invalida cache no Redis
+    q.status = "DELETING"
+    db.commit()
     redis_client.invalidate_questions_cache(question_id)
-
-    # Remove do S3
     try:
         s3_manager.delete_question_files(question_id)
+        QuestionValidator.drop_question_schema(question_id)
+        db.query(UserSolvedQuestion).filter_by(question_id=question_id).delete(synchronize_session=False)
+        db.delete(q)
+        db.commit()
     except Exception:
-        pass
-
-    # Remove do RDS
-    db.delete(q)
-    db.commit()
+        db.rollback()
+        logger.exception("Falha ao excluir questão #%s", question_id)
+        raise HTTPException(status_code=503, detail="Exclusão pendente. Tente excluir novamente para concluir a limpeza.")
+    redis_client.invalidate_questions_cache(question_id)
 
     # Log no DynamoDB
     try:
@@ -270,7 +284,7 @@ def delete_question(
             details={"action": "deleted", "question_id": question_id}
         )
     except Exception:
-        pass
+        logger.exception("Falha na auditoria DELETE_EXERCISE #%s", question_id)
 
     return {"message": f"Questão #{question_id} removida com sucesso."}
 
@@ -284,12 +298,17 @@ def publish_question(
     q = db.query(Question).filter(Question.id == question_id).first()
     if not q:
         raise HTTPException(status_code=404, detail="Questão não encontrada.")
+    if q.status == "PUBLISHED":
+        return {"id": q.id, "publishedStatus": q.status, "status": q.status}
+    if q.status != "READY" or not q.expected_hash:
+        raise HTTPException(status_code=409, detail="Somente questões validadas e prontas podem ser publicadas.")
     q.status = "PUBLISHED"
     db.commit()
     db.refresh(q)
 
     # Invalida cache Redis
     redis_client.invalidate_questions_cache(question_id)
+    redis_client.set_answer_hash(question_id, q.expected_hash)
 
     try:
         dynamo_manager.log_crud_action(
@@ -299,7 +318,7 @@ def publish_question(
             details={"title": q.title, "status": "PUBLISHED"}
         )
     except Exception:
-        pass
+        logger.exception("Falha na auditoria PUBLISH_EXERCISE #%s", question_id)
 
     return {
         "id": q.id,
