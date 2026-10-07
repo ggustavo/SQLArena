@@ -7,6 +7,20 @@ import ResultDrawer from '../components/ResultDrawer';
 import { submitQuery, checkSubmissionStatus, fetchLastSubmittedSql } from '../services/submissionService';
 import { getCategoryMeta } from '../utils/categoryMeta';
 
+function extractErrorText(err) {
+  const detail = err.response?.data?.detail;
+  if (Array.isArray(detail)) {
+    return detail.map((item) => item.msg || JSON.stringify(item)).join(' ');
+  }
+  if (typeof detail === 'string') {
+    return detail;
+  }
+  if (err.response?.status === 403) {
+    return 'Esta questão precisa ser publicada pelo instrutor para que seja possível executá-la.';
+  }
+  return err.message || 'Erro inesperado ao executar a consulta.';
+}
+
 export default function ArenaPage({ question, onBack, user, onAddPoints, initialSql }) {
   const [code, setCode] = useState(() => initialSql || '');
   const [isRunning, setIsRunning] = useState(false);
@@ -89,12 +103,12 @@ export default function ArenaPage({ question, onBack, user, onAddPoints, initial
         } catch (pollErr) {
           clearInterval(pollTimer);
           setIsRunning(false);
-          setErrorMessage(pollErr.message);
+          setErrorMessage(extractErrorText(pollErr));
         }
       }, 700);
     } catch (err) {
       setIsRunning(false);
-      setErrorMessage(err.message);
+      setErrorMessage(extractErrorText(err));
     }
   };
 
@@ -158,7 +172,7 @@ export default function ArenaPage({ question, onBack, user, onAddPoints, initial
       </div>
 
       {/* Main Full-Width Content: Left Side (Scrolls) | Right Side (Sticky Editor) */}
-      <div className="w-full px-6 lg:px-12 py-8">
+      <div className="w-full px-6 lg:px-12 pt-3 pb-6">
         <div className="w-full grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
           {/* Left Side: Enunciado, Modelo Relacional e Dados de Exemplo empilhados verticalmente */}
           <div className="lg:col-span-6 space-y-6">
@@ -258,15 +272,8 @@ export default function ArenaPage({ question, onBack, user, onAddPoints, initial
             </div>
           </div>
 
-          {/* Right Side: Monaco SQL Editor & Execution Result (Pinned/Sticky) */}
-          <div className="lg:col-span-6 space-y-4 lg:sticky lg:top-[140px]">
-            <SqlEditor
-              code={code}
-              setCode={setCode}
-              onRun={handleRunQuery}
-              isRunning={isRunning}
-            />
-
+          {/* Right Side: Execution Result (above) & Monaco SQL Editor (Pinned/Sticky) */}
+          <div className="lg:col-span-6 flex flex-col gap-2.5 lg:sticky lg:top-[132px] lg:h-[calc(100vh-165px)] transition-all">
             {(result || errorMessage || isRunning) && (
               <ResultDrawer
                 result={result}
@@ -278,6 +285,13 @@ export default function ArenaPage({ question, onBack, user, onAddPoints, initial
                 }}
               />
             )}
+
+            <SqlEditor
+              code={code}
+              setCode={setCode}
+              onRun={handleRunQuery}
+              isRunning={isRunning}
+            />
           </div>
         </div>
       </div>

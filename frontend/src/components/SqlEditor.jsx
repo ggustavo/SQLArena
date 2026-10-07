@@ -16,7 +16,7 @@ export default function SqlEditor({ code, setCode, onRun, isRunning }) {
       className={`flex flex-col bg-white dark:bg-[#1f232b] rounded-3xl border border-slate-200 dark:border-[#2d3340] overflow-hidden shadow-sm transition-all ${
         isFullscreen
           ? 'fixed inset-4 z-50 shadow-2xl ring-2 ring-slate-400 dark:ring-slate-600'
-          : 'relative w-full h-[520px] lg:h-[calc(100vh-230px)] min-h-[420px]'
+          : 'relative w-full flex-1 min-h-0'
       }`}
     >
       {/* Editor Header Bar */}

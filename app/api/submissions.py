@@ -36,8 +36,8 @@ class SubmissionCallbackRequest(BaseModel):
     outcome: str = "SUCCESS"
     is_correct: Optional[bool] = None
     isCorrect: Optional[bool] = None
-    execution_time_ms: Optional[float] = 0.0
-    executionTimeMs: Optional[float] = 0.0
+    execution_time_ms: Optional[float] = None
+    executionTimeMs: Optional[float] = None
     error_message: Optional[str] = None
     errorMessage: Optional[str] = None
     columns: List[str] = []
@@ -90,7 +90,10 @@ def submit_query(
         )
 
     if q.status != "PUBLISHED":
-        raise HTTPException(status_code=403, detail="Questão indisponível para submissões.")
+        raise HTTPException(
+            status_code=403,
+            detail="Esta questão precisa ser publicada pelo instrutor para que seja possível executá-la."
+        )
 
     submission_id = f"sub_{uuid.uuid4().hex[:12]}"
     now_iso = datetime.now(timezone.utc).isoformat()
