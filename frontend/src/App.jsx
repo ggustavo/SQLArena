@@ -35,8 +35,8 @@ export default function App() {
       const data = await getQuestions(user?.role || 'STUDENT');
       setQuestions(data);
     }
-    load();
-  }, [user]);
+    if (currentView === 'dashboard') load().catch(() => setQuestions([]));
+  }, [user, currentView]);
 
   const toggleTheme = () => {
     setTheme((t) => (t === 'dark' ? 'light' : 'dark'));
