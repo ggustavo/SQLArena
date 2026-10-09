@@ -1,27 +1,35 @@
 import React, { useState } from 'react';
-import { Database, Lock, Mail, ArrowRight, ShieldCheck, GraduationCap } from 'lucide-react';
-import { login } from '../services/authService';
+import { Database, Lock, Mail, ArrowRight, ShieldCheck, GraduationCap, UserRound } from 'lucide-react';
+import { login, register } from '../services/authService';
 
 export default function LoginPage({ onLoginSuccess }) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [name, setName] = useState('');
+  const [registerMode, setRegisterMode] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
 
   const handleSubmit = async (e) => {
     e?.preventDefault();
-    if (!email) {
-      setError('Por favor, informe seu e-mail.');
+    if (!email.trim() || !password || (registerMode && !name.trim())) {
+      setError('Preencha todos os campos.');
+      return;
+    }
+    if (registerMode && password.length < 8) {
+      setError('A senha deve ter pelo menos 8 caracteres.');
       return;
     }
     setError(null);
     setLoading(true);
 
     try {
-      const result = await login(email, password);
+      const result = registerMode
+        ? await register(name.trim(), email.trim(), password)
+        : await login(email, password);
       onLoginSuccess(result.user);
     } catch (err) {
-      setError(err.message || 'Falha ao autenticar.');
+      setError(err.response?.data?.detail || err.message || 'Não foi possível continuar.');
     } finally {
       setLoading(false);
     }
@@ -51,11 +59,23 @@ export default function LoginPage({ onLoginSuccess }) {
         {/* Login Card */}
         <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-8 sm:p-10 shadow-xl space-y-6">
           <form onSubmit={handleSubmit} className="space-y-5">
+            <div className="flex border-b border-slate-200 dark:border-slate-700" role="tablist" aria-label="Acesso">
+              <button type="button" role="tab" aria-selected={!registerMode} onClick={() => { setRegisterMode(false); setError(null); }} className={`flex-1 py-2 text-sm font-semibold ${!registerMode ? 'border-b-2 border-indigo-600 text-indigo-700 dark:text-indigo-300' : 'text-slate-500'}`}>Entrar</button>
+              <button type="button" role="tab" aria-selected={registerMode} onClick={() => { setRegisterMode(true); setError(null); }} className={`flex-1 py-2 text-sm font-semibold ${registerMode ? 'border-b-2 border-indigo-600 text-indigo-700 dark:text-indigo-300' : 'text-slate-500'}`}>Criar nova conta</button>
+            </div>
             {error && (
               <div className="p-4 rounded-xl bg-rose-50 dark:bg-rose-950/60 border border-rose-200 dark:border-rose-800 text-rose-700 dark:text-rose-300 text-sm font-medium">
                 {error}
               </div>
             )}
+
+            {registerMode && <div className="space-y-2">
+              <label htmlFor="register-name" className="text-sm font-semibold text-slate-800 dark:text-slate-200">Nome</label>
+              <div className="relative">
+                <UserRound className="w-5 h-5 text-slate-400 absolute left-4 top-1/2 -translate-y-1/2" />
+                <input id="register-name" type="text" required maxLength={100} autoComplete="name" value={name} onChange={(e) => setName(e.target.value)} className="w-full pl-12 pr-4 py-3 bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 rounded-xl" />
+              </div>
+            </div>}
 
             <div className="space-y-2">
               <label className="text-sm font-semibold text-slate-800 dark:text-slate-200">
@@ -83,6 +103,8 @@ export default function LoginPage({ onLoginSuccess }) {
                 <input
                   type="password"
                   required
+                  minLength={registerMode ? 8 : undefined}
+                  autoComplete={registerMode ? 'new-password' : 'current-password'}
                   placeholder="••••••••"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
@@ -100,7 +122,7 @@ export default function LoginPage({ onLoginSuccess }) {
                 <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
               ) : (
                 <>
-                  Entrar na Plataforma
+                  {registerMode ? 'Criar conta' : 'Entrar na Plataforma'}
                   <ArrowRight className="w-5 h-5" />
                 </>
               )}
@@ -108,7 +130,7 @@ export default function LoginPage({ onLoginSuccess }) {
           </form>
 
           {/* Quick Credential Pre-fill Helpers */}
-          <div className="pt-4 border-t border-slate-200 dark:border-slate-800 space-y-3">
+          {!registerMode && <div className="pt-4 border-t border-slate-200 dark:border-slate-800 space-y-3">
             <div className="text-xs font-semibold text-slate-500 uppercase tracking-wider text-center">
               Preencher dados para teste:
             </div>
@@ -142,7 +164,7 @@ export default function LoginPage({ onLoginSuccess }) {
                 </div>
               </button>
             </div>
-          </div>
+          </div>}
         </div>
 
         <div className="text-center text-sm text-slate-500">

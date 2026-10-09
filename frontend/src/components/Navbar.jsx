@@ -11,6 +11,9 @@ import {
   History,
   Flame,
   Coins,
+  Trophy,
+  UserRound,
+  UsersRound,
 } from 'lucide-react';
 export default function Navbar({
   user,
@@ -18,6 +21,9 @@ export default function Navbar({
   onNavigateHome,
   onOpenInstructorPanel,
   onOpenHistory,
+  onOpenProfile,
+  onOpenUsers,
+  onOpenRanking,
   theme,
   onToggleTheme,
 }) {
@@ -65,6 +71,8 @@ export default function Navbar({
                 <span>Painel do Instrutor</span>
               </button>
             )}
+
+            <button type="button" onClick={onOpenRanking} className="hidden sm:flex items-center gap-2 px-3 py-2 text-sm font-semibold text-slate-700 dark:text-slate-200" title="Ranking geral"><Trophy size={18} /> Ranking</button>
 
             {/* BOTÃO DIRETO DE HISTÓRICO DE SUBMISSÕES */}
             <button
@@ -161,6 +169,9 @@ export default function Navbar({
                         <span>Painel do Instrutor</span>
                       </button>
                     )}
+                    {isInstructor && <button type="button" onClick={() => { onOpenUsers(); setDropdownOpen(false); }} className="w-full flex items-center gap-3 px-3.5 py-2.5 text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-[#282d37] font-medium text-left"><UsersRound size={18} /> Gestão de usuários</button>}
+                    <button type="button" onClick={() => { onOpenRanking(); setDropdownOpen(false); }} className="w-full flex items-center gap-3 px-3.5 py-2.5 text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-[#282d37] font-medium text-left"><Trophy size={18} /> Ranking</button>
+                    <button type="button" onClick={() => { onOpenProfile(); setDropdownOpen(false); }} className="w-full flex items-center gap-3 px-3.5 py-2.5 text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-[#282d37] font-medium text-left"><UserRound size={18} /> Editar perfil</button>
                   </div>
 
                   {/* Botão de Tema Escuro / Claro */}

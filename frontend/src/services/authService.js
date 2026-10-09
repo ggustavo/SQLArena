@@ -36,6 +36,20 @@ export async function login(email, password) {
   return { user, token };
 }
 
+export async function register(name, email, password) {
+  const response = await api.post('/auth/register', { name, email, password });
+  const { user, token } = response.data;
+  localStorage.setItem(STORAGE_KEY_USER, JSON.stringify(user));
+  localStorage.setItem(STORAGE_KEY_TOKEN, token);
+  return { user, token };
+}
+
+export async function updateProfile(changes) {
+  const response = await api.put('/users/me', changes);
+  localStorage.setItem(STORAGE_KEY_USER, JSON.stringify(response.data));
+  return response.data;
+}
+
 /**
  * Retorna o usuário logado atualmente (da memória / localStorage).
  */
