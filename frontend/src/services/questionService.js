@@ -13,7 +13,8 @@ let questionsCache = [...MOCK_QUESTIONS];
 export async function getQuestions(userRole = 'STUDENT') {
   if (USE_MOCK) {
     await new Promise((res) => setTimeout(res, 100));
-    return questionsCache.filter((q) => userRole === 'INSTRUCTOR' || q.publishedStatus === 'PUBLISHED');
+    // Retorna todas as questões disponíveis
+    return [...questionsCache];
   }
 
   // --- Backend Real ---
@@ -52,15 +53,15 @@ export async function createQuestion(formData) {
       );
     }
 
-    const newId = Math.max(0, ...questionsCache.map((q) => q.id)) + 1;
+    const newId = questionsCache.length + 1;
     const newQuestion = {
       id: newId,
       title: formData.title || `Questão SQL #${newId}`,
       difficulty: formData.difficulty || 'Médio',
       categories: formData.categories || (formData.category ? [formData.category] : ['Consultas Básicas']),
       category: (formData.categories && formData.categories[0]) || formData.category || 'Geral',
-      status: 'UNSOLVED',
-      publishedStatus: 'READY',
+      status: 'PUBLISHED',
+      publishedStatus: 'PUBLISHED',
       description: formData.description || 'Descrição do exercício...',
       tables: formData.tables || [
         {
@@ -101,7 +102,7 @@ export async function publishQuestion(id) {
     await new Promise((res) => setTimeout(res, 350));
     const q = questionsCache.find((item) => item.id === Number(id));
     if (!q) throw new Error('Questão não encontrada');
-    q.publishedStatus = 'PUBLISHED';
+    q.status = 'PUBLISHED';
 
     await logCrudAction({
       actionType: 'PUBLISH_EXERCISE',

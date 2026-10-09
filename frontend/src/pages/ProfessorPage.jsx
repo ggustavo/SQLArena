@@ -1,13 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { getQuestions, createQuestion, deleteQuestion, publishQuestion } from '../services/questionService';
+import { getQuestions, createQuestion, deleteQuestion } from '../services/questionService';
 import { getCategories } from '../services/categoryService';
-import { PlusCircle, Trash2, ArrowLeft, Send, CheckCircle2, AlertCircle, Tag } from 'lucide-react';
-
-function errorText(err) {
-  const detail = err.response?.data?.detail;
-  if (Array.isArray(detail)) return detail.map((item) => item.msg).join(' ');
-  return typeof detail === 'string' ? detail : err.message;
-}
+import { PlusCircle, Trash2, ArrowLeft, Database, CheckCircle2, AlertCircle, Tag } from 'lucide-react';
 
 export default function ProfessorPage({ onBack }) {
   const [questions, setQuestions] = useState([]);
@@ -15,7 +9,6 @@ export default function ProfessorPage({ onBack }) {
   const [selectedCategories, setSelectedCategories] = useState(['JOINs']);
   const [loading, setLoading] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [pendingId, setPendingId] = useState(null);
   const [notification, setNotification] = useState(null);
   const [errorMessage, setErrorMessage] = useState(null);
 
@@ -51,7 +44,7 @@ ORDER BY total_vendas DESC;`);
       setQuestions(questionsData);
       setCategoriesList(categoriesData);
     } catch (err) {
-      setErrorMessage(errorText(err));
+      setErrorMessage(err.message);
     } finally {
       setLoading(false);
     }
@@ -95,7 +88,7 @@ ORDER BY total_vendas DESC;`);
       const updated = await getQuestions('INSTRUCTOR');
       setQuestions(updated);
     } catch (err) {
-      setErrorMessage(errorText(err));
+      setErrorMessage(err.message);
     } finally {
       setIsSubmitting(false);
     }
@@ -103,38 +96,13 @@ ORDER BY total_vendas DESC;`);
 
   const handleDelete = async (id) => {
     if (!window.confirm(`Deseja realmente remover a questão #${id}?`)) return;
-    setPendingId(id);
-    setErrorMessage(null);
-    setNotification(null);
     try {
       await deleteQuestion(id);
       setNotification(`Questão #${id} removida com sucesso.`);
       const updated = await getQuestions('INSTRUCTOR');
       setQuestions(updated);
     } catch (err) {
-      setErrorMessage(errorText(err));
-      try {
-        setQuestions(await getQuestions('INSTRUCTOR'));
-      } catch {
-        // Mantém a mensagem da operação que falhou.
-      }
-    } finally {
-      setPendingId(null);
-    }
-  };
-
-  const handlePublish = async (id) => {
-    setPendingId(id);
-    setErrorMessage(null);
-    setNotification(null);
-    try {
-      await publishQuestion(id);
-      setNotification(`Questão #${id} publicada com sucesso.`);
-      setQuestions(await getQuestions('INSTRUCTOR'));
-    } catch (err) {
-      setErrorMessage(errorText(err));
-    } finally {
-      setPendingId(null);
+      setErrorMessage(err.message);
     }
   };
 
@@ -198,7 +166,6 @@ ORDER BY total_vendas DESC;`);
                 <input
                   type="text"
                   required
-                  maxLength={200}
                   placeholder="Ex: Top 5 Clientes com Maior Faturamento"
                   value={title}
                   onChange={(e) => setTitle(e.target.value)}
@@ -319,7 +286,7 @@ ORDER BY total_vendas DESC;`);
 
             <button
               type="submit"
-              disabled={isSubmitting || loading}
+              disabled={isSubmitting}
               className="w-full py-4 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-base transition shadow-lg shadow-indigo-600/30 flex items-center justify-center gap-2"
             >
               {isSubmitting ? (
@@ -330,7 +297,7 @@ ORDER BY total_vendas DESC;`);
               ) : (
                 <>
                   <PlusCircle className="w-5 h-5" />
-                  Salvar Questão
+                  Salvar e Disponibilizar Questão
                 </>
               )}
             </button>
@@ -349,8 +316,6 @@ ORDER BY total_vendas DESC;`);
           </div>
 
           <div className="space-y-4 max-h-[800px] overflow-y-auto pr-1">
-            {loading && <p role="status">Carregando questões...</p>}
-            {!loading && questions.length === 0 && <p>Nenhuma questão cadastrada.</p>}
             {questions.map((q) => {
               const qCategories = q.categories || (q.category ? [q.category] : []);
 
@@ -360,7 +325,7 @@ ORDER BY total_vendas DESC;`);
                   className="p-5 rounded-2xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 space-y-3"
                 >
                   <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0 break-words">
+                    <div>
                       <span className="text-xs font-mono text-slate-400 font-bold">QUESTÃO #{q.id}</span>
                       <h3 className="text-base font-bold text-slate-900 dark:text-white mt-0.5">
                         {q.title}
@@ -368,7 +333,7 @@ ORDER BY total_vendas DESC;`);
                     </div>
 
                     <span className="px-3 py-1 rounded-full text-xs font-semibold bg-emerald-100 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-800 shrink-0">
-                      {{ PUBLISHED: 'Publicada', READY: 'Pronta', DRAFT: 'Rascunho', DELETING: 'Exclusão pendente' }[q.publishedStatus] || q.publishedStatus}
+                      Publicada
                     </span>
                   </div>
 
@@ -384,25 +349,13 @@ ORDER BY total_vendas DESC;`);
                     ))}
                   </div>
 
-                  <div className="flex flex-wrap items-center justify-between gap-2 pt-3 border-t border-slate-200 dark:border-slate-800 text-sm">
+                  <div className="flex items-center justify-between pt-3 border-t border-slate-200 dark:border-slate-800 text-sm">
                     <span className="text-sm text-slate-600 dark:text-slate-400 font-medium">
                       Dificuldade: <strong className="text-slate-900 dark:text-slate-200">{q.difficulty}</strong>
                     </span>
 
-                    {q.publishedStatus === 'READY' && (
-                      <button
-                        onClick={() => handlePublish(q.id)}
-                        disabled={pendingId !== null}
-                        title="Publicar questão"
-                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-emerald-700 dark:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-950 disabled:opacity-50"
-                      >
-                        <Send className="w-4 h-4" />
-                        Publicar
-                      </button>
-                    )}
                     <button
                       onClick={() => handleDelete(q.id)}
-                      disabled={pendingId !== null}
                       className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40 text-sm font-semibold transition"
                       title="Excluir questão"
                     >
