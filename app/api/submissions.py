@@ -190,6 +190,7 @@ def process_submission_callback(
                     user.score = (user.score or 0) + 10
                     user.solved_count = (user.solved_count or 0) + 1
                 db.commit()
+                redis_client.invalidate_ranking()
                 points_awarded = 10
         except Exception as ex:
             db.rollback()

@@ -146,4 +146,28 @@ class RedisClient:
             logger.error(f"Erro ao invalidar cache de questões no Redis: {e}")
             return False
 
+    def get_ranking(self) -> Optional[List[Dict[str, Any]]]:
+        try:
+            value = self.client.get("ranking:leaderboard")
+            return json.loads(value) if value is not None else None
+        except Exception as e:
+            logger.warning("Erro ao ler ranking do Redis: %s", e)
+            return None
+
+    def set_ranking(self, data: List[Dict[str, Any]]) -> bool:
+        try:
+            self.client.set("ranking:leaderboard", json.dumps(data), ex=60)
+            return True
+        except Exception as e:
+            logger.warning("Erro ao salvar ranking no Redis: %s", e)
+            return False
+
+    def invalidate_ranking(self) -> bool:
+        try:
+            self.client.delete("ranking:leaderboard")
+            return True
+        except Exception as e:
+            logger.warning("Erro ao invalidar ranking no Redis: %s", e)
+            return False
+
 redis_client = RedisClient()

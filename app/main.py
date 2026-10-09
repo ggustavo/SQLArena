@@ -22,6 +22,8 @@ from app.api.categories import router as categories_router
 from app.api.questions import router as questions_router
 from app.api.submissions import router as submissions_router
 from app.api.audit import router as audit_router
+from app.api.users import router as users_router
+from app.api.ranking import router as ranking_router
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 logger = logging.getLogger("SQLArenaApp")
@@ -107,6 +109,8 @@ app.include_router(categories_router, prefix="/api")
 app.include_router(questions_router, prefix="/api")
 app.include_router(submissions_router, prefix="/api")
 app.include_router(audit_router, prefix="/api")
+app.include_router(users_router, prefix="/api")
+app.include_router(ranking_router, prefix="/api")
 
 # Servir Frontend Compilado (Single Page Application no mesmo host)
 from fastapi.staticfiles import StaticFiles
