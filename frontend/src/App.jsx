@@ -4,6 +4,9 @@ import LoginPage from './pages/LoginPage';
 import QuestionDashboard from './pages/QuestionDashboard';
 import ArenaPage from './pages/ArenaPage';
 import ProfessorPage from './pages/ProfessorPage';
+import ProfilePage from './pages/ProfilePage';
+import UserManagementPage from './pages/UserManagementPage';
+import RankingPage from './pages/RankingPage';
 import HistoryModal from './components/HistoryModal';
 import { getCurrentUser, logout } from './services/authService';
 import { getQuestions } from './services/questionService';
@@ -100,6 +103,9 @@ export default function App() {
         onLogout={handleLogout}
         onNavigateHome={() => setCurrentView('dashboard')}
         onOpenInstructorPanel={() => setCurrentView('instructor')}
+        onOpenUsers={() => setCurrentView('users')}
+        onOpenProfile={() => setCurrentView('profile')}
+        onOpenRanking={() => setCurrentView('ranking')}
         onOpenHistory={() => setIsHistoryModalOpen(true)}
       />
 
@@ -125,6 +131,13 @@ export default function App() {
         {currentView === 'instructor' && (
           <ProfessorPage onBack={() => setCurrentView('dashboard')} />
         )}
+        {currentView === 'users' && user.role === 'INSTRUCTOR' && (
+          <UserManagementPage currentUser={user} onBack={() => setCurrentView('instructor')} />
+        )}
+        {currentView === 'profile' && (
+          <ProfilePage user={user} onBack={() => setCurrentView('dashboard')} onUpdated={setUser} />
+        )}
+        {currentView === 'ranking' && <RankingPage currentUser={user} />}
       </main>
 
       {/* Modal de Histórico de Submissões: Abre sobre qualquer tela sem perder o contexto */}
