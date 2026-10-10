@@ -153,6 +153,7 @@ SQLArena/
 │   ├── testes/         # Testes automatizados unitários e de integração E2E
 │   └── main.py         # App FastAPI + Ponto de montagem da SPA React compilada
 ├── frontend/           # Aplicação React 18, Vite, Tailwind CSS e Monaco Editor
+├── locust/             # Testes de carga, concorrência e estresse (Locust)
 ├── ministack/          # Compose local com Postgres, Redis e emulador AWS
 └── terraform/          # Infraestrutura como Código para Ministack e AWS Academy
     ├── envs/
@@ -467,7 +468,7 @@ python app/testes/main_dynamodb.py
 
 ## ⚡ Teste de Carga e Auto Scaling com Locust
 
-O projeto inclui um cenário completo de teste de estresse em [`locustfile.py`](locustfile.py) que simula o comportamento real de centenas de alunos e instrutores simultâneos:
+O projeto inclui um cenário completo de teste de estresse em [`locust/locustfile.py`](locust/locustfile.py) que simula o comportamento real de centenas de alunos e instrutores simultâneos:
 * Cadastro automático e autenticação com JWT
 * Navegação pelo catálogo e abertura de detalhes de exercícios
 * Submissão assíncrona de consultas SQL com mix probabilístico realista:
@@ -484,7 +485,7 @@ O projeto inclui um cenário completo de teste de estresse em [`locustfile.py`](
 Com o backend ativo em um terminal (`uvicorn app.main:app --port 8000`) e o worker em outro (`python app/worker/main.py`), execute:
 
 ```powershell
-app\.venv\Scripts\locust.exe -f locustfile.py --host http://localhost:8000
+app\.venv\Scripts\locust.exe -f locust/locustfile.py --host http://localhost:8000
 ```
 
 1. Abra seu navegador em: **[http://localhost:8089](http://localhost:8089)**
@@ -496,7 +497,7 @@ app\.venv\Scripts\locust.exe -f locustfile.py --host http://localhost:8000
 Após aplicar o Terraform na AWS, utilize a URL pública do Load Balancer (`alb_dns_name`):
 
 ```powershell
-app\.venv\Scripts\locust.exe -f locustfile.py --host http://<alb_dns_name>
+app\.venv\Scripts\locust.exe -f locust/locustfile.py --host http://<alb_dns_name>
 ```
 
 #### O que observar na AWS enquanto o Locust roda:
@@ -514,6 +515,6 @@ app\.venv\Scripts\locust.exe -f locustfile.py --host http://<alb_dns_name>
 Para rodar um teste automatizado de 30 segundos com 10 usuários direto no terminal:
 
 ```powershell
-app\.venv\Scripts\locust.exe -f locustfile.py --host http://localhost:8000 --users 10 --spawn-rate 2 --run-time 30s --headless
+app\.venv\Scripts\locust.exe -f locust/locustfile.py --host http://localhost:8000 --users 10 --spawn-rate 2 --run-time 30s --headless
 ```
 

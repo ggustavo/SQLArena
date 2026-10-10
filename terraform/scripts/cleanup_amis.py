@@ -6,9 +6,51 @@ snapshots de disco EBS criados para o Web e Worker sejam 100% eliminados da AWS.
 """
 
 import argparse
+import os
+import re
 import sys
+from pathlib import Path
 import boto3
 from botocore.exceptions import ClientError
+
+# Configura codificação do console para UTF-8 no Windows
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+if hasattr(sys.stderr, "reconfigure"):
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
+_script_dir = Path(__file__).resolve().parent
+_terraform_dir = _script_dir.parent
+_project_root = _terraform_dir.parent
+
+def load_credentials_from_tfvars():
+    """Lê as credenciais AWS a partir de terraform/envs/credentials.tfvars."""
+    cred_file = _terraform_dir / "envs" / "credentials.tfvars"
+    if not cred_file.exists():
+        cred_file = _terraform_dir / "credentials.auto.tfvars"
+    creds = {}
+    if cred_file.exists():
+        with open(cred_file, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if line.startswith("#") or not line:
+                    continue
+                match = re.match(r'(\w+)\s*=\s*["\']?([^"\']+)["\']?', line)
+                if match:
+                    creds[match.group(1)] = match.group(2)
+    return creds
+
+def get_ec2_client(region="us-east-1"):
+    """Instancia o cliente EC2 usando credenciais do tfvars ou variáveis de ambiente."""
+    creds = load_credentials_from_tfvars()
+    kwargs = {"region_name": region}
+    if "aws_access_key" in creds and "aws_secret_key" in creds:
+        kwargs["aws_access_key_id"] = creds["aws_access_key"]
+        kwargs["aws_secret_access_key"] = creds["aws_secret_key"]
+        if "aws_session_token" in creds and creds["aws_session_token"]:
+            kwargs["aws_session_token"] = creds["aws_session_token"]
+
+    return boto3.client("ec2", **kwargs)
 
 def cleanup_ami(ec2_client, ami_id: str):
     """Desregistra a AMI e remove todos os snapshots EBS vinculados a ela."""
@@ -84,7 +126,7 @@ def main():
         return 0
 
     try:
-        ec2 = boto3.client("ec2", region_name=args.region)
+        ec2 = get_ec2_client(region=args.region)
     except Exception as e:
         print(f"[CLEANUP] Aviso: cliente AWS não inicializado ({e}). Ignorando remoção de AMI.")
         return 0
