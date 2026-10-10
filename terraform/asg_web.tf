@@ -50,10 +50,15 @@ SQS_QUEUE_NAME=${aws_sqs_queue.submissions_queue.name}
 SQS_DLQ_NAME=${aws_sqs_queue.submissions_dlq.name}
 EOT
 
+    # Executar o seed inicial do banco (tabelas, categorias e 21 questoes no RDS/S3/Redis)
+    cd /opt/sqlarena
+    export PYTHONPATH="."
+    /opt/sqlarena/app/.venv/bin/python app/database/seed.py || echo "[WARN] Seed ja executado anteriormente ou aguardando readiness."
+
     sudo systemctl daemon-reload
     sudo systemctl enable sqlarena-web.service
     sudo systemctl restart sqlarena-web.service
-    echo "=== No Web SQLArena inicializado com sucesso via Golden AMI em ~15s ==="
+    echo "=== No Web SQLArena inicializado com sucesso via Golden AMI em ~20s ==="
     exit 0
 fi
 

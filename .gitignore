@@ -55,7 +55,9 @@ override.tf.json
 terraform.rc
 *.secrets.tfvars
 *secret*.tfvars
+*.auto.tfvars
 credentials.auto.tfvars
+amis.auto.tfvars
 *.credentials.tfvars
 
 # Frontend (Node / Vite)

@@ -51,25 +51,31 @@ def get_ec2_client(region="us-east-1"):
 
     return boto3.client("ec2", **kwargs)
 
-def update_aws_tfvars(web_ami=None, worker_ami=None):
-    """Atualiza as variáveis web_ami e worker_ami em terraform/envs/aws.tfvars."""
-    tfvars_path = _terraform_dir / "envs" / "aws.tfvars"
-    if not tfvars_path.exists():
-        print(f"   [AVISO] Arquivo {tfvars_path} não encontrado para atualização automática.")
-        return
-
-    with open(tfvars_path, "r", encoding="utf-8") as f:
-        content = f.read()
+def update_amis_tfvars(web_ami=None, worker_ami=None):
+    """Grava as variáveis web_ami e worker_ami em terraform/amis.auto.tfvars (ignorado pelo git)."""
+    amis_path = _terraform_dir / "amis.auto.tfvars"
+    existing = {}
+    if amis_path.exists():
+        with open(amis_path, "r", encoding="utf-8") as f:
+            for line in f:
+                m = re.match(r'(\w+)\s*=\s*"([^"]*)"', line.strip())
+                if m:
+                    existing[m.group(1)] = m.group(2)
 
     if web_ami:
-        content = re.sub(r'web_ami\s*=\s*"[^"]*"', f'web_ami           = "{web_ami}"', content)
+        existing["web_ami"] = web_ami
     if worker_ami:
-        content = re.sub(r'worker_ami\s*=\s*"[^"]*"', f'worker_ami        = "{worker_ami}"', content)
+        existing["worker_ami"] = worker_ami
 
-    with open(tfvars_path, "w", encoding="utf-8") as f:
-        f.write(content)
+    with open(amis_path, "w", encoding="utf-8") as f:
+        f.write("# ==============================================================================\n")
+        f.write("# Golden AMIs geradas automaticamente por build_golden_amis.py\n")
+        f.write("# Este arquivo e ignorado pelo Git (*.auto.tfvars) e carregado automaticamente!\n")
+        f.write("# ==============================================================================\n")
+        for k in sorted(existing.keys()):
+            f.write(f'{k} = "{existing[k]}"\n')
 
-    print(f"   ✓ [tfvars Atualizado] Novas AMIs salvas em {tfvars_path.name}.")
+    print(f"   ✓ [amis.auto.tfvars Atualizado] Novas AMIs salvas em {amis_path.name} (ignorado pelo Git).")
 
 def build_single_ami(ec2, role: str, base_ami: str, instance_type: str) -> str:
     """
@@ -271,7 +277,7 @@ def main():
             base_ami=args.base_ami,
             instance_type=args.instance_type
         )
-        update_aws_tfvars(worker_ami=worker_ami_id)
+        update_amis_tfvars(worker_ami=worker_ami_id)
 
     if args.target in ("all", "web"):
         web_ami_id = build_single_ami(
@@ -280,7 +286,7 @@ def main():
             base_ami=args.base_ami,
             instance_type=args.instance_type
         )
-        update_aws_tfvars(web_ami=web_ami_id)
+        update_amis_tfvars(web_ami=web_ami_id)
 
     print("\n" + "=" * 80)
     print("🎉 TODAS AS GOLDEN AMIS FORAM CRIADAS COM SUCESSO!")
