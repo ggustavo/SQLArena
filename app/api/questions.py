@@ -1,6 +1,7 @@
+import json
 import logging
 from typing import List, Optional, Any, Dict, Literal
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Form
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.orm import Session
 from app.database.session import get_db
@@ -133,36 +134,67 @@ def get_question(
     res["status"] = "SOLVED" if is_solved else "UNSOLVED"
     return res
 
-@router.post("", status_code=status.HTTP_201_CREATED)
-def create_question(
-    payload: QuestionCreateRequest,
-    db: Session = Depends(get_db),
-    user: User = Depends(require_instructor)
-):
-    """
-    Cria e valida dinamicamente uma nova questão (Instrutor):
-    1. Registra no RDS para obter ID.
-    2. Executa a sandbox de validação no PostgreSQL RDS (schema pergunta_{id}).
-    3. Executa schema.sql, data.sql e answer.sql (exigindo ORDER BY).
-    4. Extrai colunas esperadas e gera o hash canônico SHA-256.
-    5. Persiste expected_hash no RDS e no Redis.
-    6. Salva scripts no S3 e grava log de auditoria no DynamoDB.
-    7. Invalida caches do Redis.
-    """
+async def _read_sql_file_or_text(
+    file: Optional[UploadFile],
+    text: Optional[str],
+    field_name: str
+) -> str:
+    """Extrai conteúdo SQL a partir de um arquivo .sql enviado ou de um campo de texto."""
+    if file and file.filename:
+        filename_lower = file.filename.lower()
+        if not filename_lower.endswith(".sql"):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Arquivo '{file.filename}' inválido para {field_name}. Apenas arquivos com extensão .sql são permitidos."
+            )
+        content_bytes = await file.read()
+        if len(content_bytes) > 2 * 1024 * 1024:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Arquivo '{file.filename}' excede o tamanho máximo de 2 MB."
+            )
+        try:
+            return content_bytes.decode("utf-8")
+        except UnicodeDecodeError:
+            try:
+                return content_bytes.decode("latin-1")
+            except Exception:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Não foi possível decodificar o arquivo '{file.filename}'. O arquivo deve ser um script SQL codificado em UTF-8."
+                )
+    return (text or "").strip()
+
+
+def _perform_create_question(
+    title: str,
+    difficulty: str,
+    categories: List[str],
+    category: Optional[str],
+    description: str,
+    schema_sql: str,
+    data_sql: str,
+    answer_sql: str,
+    sample_tables: Optional[List[Dict[str, Any]]],
+    expected_columns: Optional[List[str]],
+    db: Session,
+    user: User
+) -> Dict[str, Any]:
+    """Lógica centralizada de criação, validação em sandbox RDS, armazenamento em S3 e auditoria."""
     # 1. Cria registro preliminar no RDS
     new_q = Question(
-        title=payload.title,
-        difficulty=payload.difficulty or "Médio",
+        title=title,
+        difficulty=difficulty or "Médio",
         status="READY",
-        description=payload.description or "",
-        schema_sql=payload.schemaSql or "",
-        sample_tables=payload.sampleTables or [],
-        expected_columns=payload.expectedColumns or [],
+        description=description or "",
+        schema_sql=schema_sql or "",
+        sample_tables=sample_tables or [],
+        expected_columns=expected_columns or [],
         created_by=user.id
     )
 
     # Associa categorias
-    cat_names = payload.categories or ([payload.category] if payload.category else ["Filtragem"])
+    cat_names = categories or ([category] if category else ["Filtragem"])
     for c_name in dict.fromkeys(cat_names):
         c = db.query(Category).filter(Category.name == c_name).first()
         if not c:
@@ -176,9 +208,9 @@ def create_question(
     try:
         val_result = QuestionValidator.validate_and_setup_question(
             question_id=new_q.id,
-            schema_sql=payload.schemaSql or "",
-            data_sql=payload.dataSql or "",
-            answer_sql=payload.answerSql or "",
+            schema_sql=schema_sql or "",
+            data_sql=data_sql or "",
+            answer_sql=answer_sql or "",
         )
     except QuestionValidationError as qe:
         db.rollback()
@@ -198,14 +230,14 @@ def create_question(
     new_q.expected_columns = val_result["expected_columns"]
     new_q.sample_tables = val_result["sample_tables"]
 
-    # O registro só fica visível após os três scripts estarem disponíveis.
+    # 4. Salva scripts no S3
     question_id = new_q.id
     try:
         s3_manager.upload_question_sql_files(
             question_id=question_id,
-            schema_sql=payload.schemaSql or "-- Sem schema\n",
-            data_sql=payload.dataSql or "-- Sem dados\n",
-            answer_sql=payload.answerSql
+            schema_sql=schema_sql or "-- Sem schema\n",
+            data_sql=data_sql or "-- Sem dados\n",
+            answer_sql=answer_sql
         )
         db.commit()
     except Exception:
@@ -218,6 +250,7 @@ def create_question(
                 logger.exception("Falha na limpeza da questão #%s", question_id)
         raise HTTPException(status_code=503, detail="Não foi possível salvar a questão. Tente novamente.")
 
+    # 5. Atualiza Caches do Redis
     db.refresh(new_q)
     redis_client.invalidate_questions_cache(new_q.id)
     redis_client.set_answer_hash(new_q.id, new_q.expected_hash)
@@ -248,6 +281,93 @@ def create_question(
         "expectedColumns": new_q.expected_columns,
         "expectedHash": new_q.expected_hash
     }
+
+
+@router.post("", status_code=status.HTTP_201_CREATED)
+def create_question(
+    payload: QuestionCreateRequest,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_instructor)
+):
+    """
+    Cria e valida dinamicamente uma nova questão com dados em JSON (Instrutor).
+    """
+    return _perform_create_question(
+        title=payload.title,
+        difficulty=payload.difficulty or "Médio",
+        categories=payload.categories,
+        category=payload.category,
+        description=payload.description or "",
+        schema_sql=payload.schemaSql or "",
+        data_sql=payload.dataSql or "",
+        answer_sql=payload.answerSql or "",
+        sample_tables=payload.sampleTables,
+        expected_columns=payload.expectedColumns,
+        db=db,
+        user=user
+    )
+
+
+@router.post("/upload", status_code=status.HTTP_201_CREATED)
+async def create_question_upload(
+    title: str = Form(...),
+    difficulty: str = Form("Médio"),
+    categories: Optional[str] = Form(None),
+    category: Optional[str] = Form(None),
+    description: str = Form(""),
+    schema_file: Optional[UploadFile] = File(None),
+    schema_sql: Optional[str] = Form(None),
+    data_file: Optional[UploadFile] = File(None),
+    data_sql: Optional[str] = Form(None),
+    answer_file: Optional[UploadFile] = File(None),
+    answer_sql: Optional[str] = Form(None),
+    db: Session = Depends(get_db),
+    user: User = Depends(require_instructor)
+):
+    """
+    Cria e valida uma nova questão permitindo envio direto de arquivos .sql ou texto digitado (multipart/form-data).
+    """
+    title_clean = title.strip()
+    if not title_clean:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="O título não pode estar vazio.")
+    if len(title_clean) > 200:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="O título deve ter no máximo 200 caracteres.")
+    if difficulty not in ("Fácil", "Médio", "Difícil"):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Dificuldade inválida. Escolha entre Fácil, Médio ou Difícil.")
+
+    # Resolve o conteúdo SQL a partir dos arquivos enviados ou campos de texto
+    resolved_schema = await _read_sql_file_or_text(schema_file, schema_sql, "schema.sql")
+    resolved_data = await _read_sql_file_or_text(data_file, data_sql, "data.sql")
+    resolved_answer = await _read_sql_file_or_text(answer_file, answer_sql, "answer.sql")
+
+    # Extrai lista de categorias
+    parsed_cats: List[str] = []
+    if categories:
+        raw = categories.strip()
+        if raw.startswith("[") and raw.endswith("]"):
+            try:
+                parsed_cats = json.loads(raw)
+            except Exception:
+                parsed_cats = [c.strip().strip('"').strip("'") for c in raw[1:-1].split(",") if c.strip()]
+        else:
+            parsed_cats = [c.strip() for c in raw.split(",") if c.strip()]
+    elif category:
+        parsed_cats = [category.strip()]
+
+    return _perform_create_question(
+        title=title_clean,
+        difficulty=difficulty,
+        categories=parsed_cats,
+        category=category,
+        description=description or "",
+        schema_sql=resolved_schema,
+        data_sql=resolved_data,
+        answer_sql=resolved_answer,
+        sample_tables=None,
+        expected_columns=None,
+        db=db,
+        user=user
+    )
 
 @router.delete("/{question_id}", status_code=status.HTTP_200_OK)
 def delete_question(

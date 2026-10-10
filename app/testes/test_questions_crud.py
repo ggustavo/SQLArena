@@ -176,3 +176,57 @@ def test_s3_delete_uses_exact_directory():
     manager.s3.delete_objects.return_value = {"Errors": [{"Key": "questions/1/schema.sql"}]}
     with pytest.raises(RuntimeError, match="parcial"):
         manager.delete_question_files(1)
+
+
+def test_create_question_upload_with_sql_files(context):
+    client, db, app, teacher, student, cache, storage, audit, validator = context
+    files = {
+        "schema_file": ("schema.sql", b"CREATE TABLE produtos (id INT);", "text/plain"),
+        "data_file": ("data.sql", b"INSERT INTO produtos VALUES (10);", "text/plain"),
+        "answer_file": ("answer.sql", b"SELECT * FROM produtos ORDER BY id;", "text/plain"),
+    }
+    data = {
+        "title": "Questao via Upload de Arquivos",
+        "difficulty": "Médio",
+        "categories": '["Filtragem"]',
+        "description": "Exemplo de cadastro usando arquivos .sql",
+    }
+    response = client.post("/api/questions/upload", data=data, files=files)
+    assert response.status_code == 201
+    created = response.json()
+    assert created["title"] == "Questao via Upload de Arquivos"
+    assert created["categories"] == ["Filtragem"]
+    storage.upload_question_sql_files.assert_called_once()
+
+
+def test_create_question_upload_mixed_file_and_text(context):
+    client, db, app, teacher, student, cache, storage, audit, validator = context
+    files = {
+        "schema_file": ("schema.sql", b"CREATE TABLE users (id INT);", "text/plain"),
+    }
+    data = {
+        "title": "Questao Mista Arquivo e Texto",
+        "difficulty": "Fácil",
+        "categories": "Filtragem",
+        "data_sql": "INSERT INTO users VALUES (1);",
+        "answer_sql": "SELECT id FROM users ORDER BY id;",
+    }
+    response = client.post("/api/questions/upload", data=data, files=files)
+    assert response.status_code == 201
+    created = response.json()
+    assert created["title"] == "Questao Mista Arquivo e Texto"
+
+
+def test_create_question_upload_rejects_non_sql_extension(context):
+    client, *rest = context
+    files = {
+        "schema_file": ("schema.csv", b"id,name\n1,test", "text/csv"),
+    }
+    data = {
+        "title": "Tentativa com CSV",
+        "answer_sql": "SELECT 1 ORDER BY 1;",
+    }
+    response = client.post("/api/questions/upload", data=data, files=files)
+    assert response.status_code == 400
+    assert "Apenas arquivos com extensão .sql" in response.json()["detail"]
+

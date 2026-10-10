@@ -45,8 +45,27 @@ export async function createQuestion(formData) {
   if (USE_MOCK) {
     await new Promise((res) => setTimeout(res, 800));
 
+    let title, difficulty, categories, category, description, schemaSql, dataSql, answerSql;
+    if (formData instanceof FormData) {
+      title = formData.get('title');
+      difficulty = formData.get('difficulty');
+      const catsRaw = formData.get('categories');
+      try {
+        categories = catsRaw ? JSON.parse(catsRaw) : [];
+      } catch {
+        categories = catsRaw ? catsRaw.split(',').map((s) => s.trim()) : [];
+      }
+      category = formData.get('category') || (categories && categories[0]) || 'Geral';
+      description = formData.get('description');
+      schemaSql = formData.get('schema_sql') || '';
+      dataSql = formData.get('data_sql') || '';
+      answerSql = formData.get('answer_sql') || '';
+    } else {
+      ({ title, difficulty, categories, category, description, schemaSql, dataSql, answerSql } = formData);
+    }
+
     // Validação do Requisito 5: answer.sql DEVE conter ORDER BY
-    if (formData.answerSql && !formData.answerSql.toUpperCase().includes('ORDER BY')) {
+    if (answerSql && !answerSql.toUpperCase().includes('ORDER BY')) {
       throw new Error(
         'Erro de Validação (Requisito 5): A consulta gabarito (answer.sql) DEVE conter cláusula ORDER BY para garantir determinismo.'
       );
@@ -55,24 +74,24 @@ export async function createQuestion(formData) {
     const newId = Math.max(0, ...questionsCache.map((q) => q.id)) + 1;
     const newQuestion = {
       id: newId,
-      title: formData.title || `Questão SQL #${newId}`,
-      difficulty: formData.difficulty || 'Médio',
-      categories: formData.categories || (formData.category ? [formData.category] : ['Consultas Básicas']),
-      category: (formData.categories && formData.categories[0]) || formData.category || 'Geral',
+      title: title || `Questão SQL #${newId}`,
+      difficulty: difficulty || 'Médio',
+      categories: categories || (category ? [category] : ['Consultas Básicas']),
+      category: (categories && categories[0]) || category || 'Geral',
       status: 'UNSOLVED',
       publishedStatus: 'READY',
-      description: formData.description || 'Descrição do exercício...',
-      tables: formData.tables || [
+      description: description || 'Descrição do exercício...',
+      tables: (formData && !formData.get && formData.tables) || [
         {
           name: 'dados_exemplo',
           columns: [{ name: 'id', type: 'INT' }, { name: 'valor', type: 'TEXT' }],
           sampleRows: [{ id: 1, valor: 'Exemplo A' }],
         },
       ],
-      schemaSql: formData.schemaSql || '',
-      dataSql: formData.dataSql || '',
-      answerSql: formData.answerSql || '',
-      xpReward: formData.xpReward || 50,
+      schemaSql: schemaSql || '',
+      dataSql: dataSql || '',
+      answerSql: answerSql || '',
+      xpReward: (formData && !formData.get && formData.xpReward) || 50,
       starterSql: `-- Escreva sua consulta SQL para resolver o problema\nSELECT * FROM autores;`,
     };
 
@@ -89,6 +108,15 @@ export async function createQuestion(formData) {
   }
 
   // --- Backend Real ---
+  if (formData instanceof FormData) {
+    const response = await api.post('/questions/upload', formData, {
+      headers: {
+        'Content-Type': 'multipart/form-data',
+      },
+    });
+    return response.data;
+  }
+
   const response = await api.post('/questions', formData);
   return response.data;
 }
