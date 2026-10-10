@@ -175,49 +175,54 @@ def build_single_ami(ec2, role: str, base_ami: str, instance_type: str) -> str:
             pass
         raise
 
-    # 3. Criar a Golden AMI a partir do disco limpo e parado
-    print(f"\n[3/4] Congelando disco e gerando Golden AMI '{ami_name}'...")
-    img_resp = ec2.create_image(
-        InstanceId=instance_id,
-        Name=ami_name,
-        Description=f"Golden AMI pré-instalada para SQLArena {role.upper()} ({timestamp})",
-        NoReboot=True,
-        TagSpecifications=[
-            {
-                "ResourceType": "image",
-                "Tags": [
-                    {"Key": "Name", "Value": ami_name},
-                    {"Key": "Project", "Value": "sqlarena"},
-                    {"Key": "Role", "Value": role}
-                ]
-            }
-        ]
-    )
-    new_ami_id = img_resp["ImageId"]
-    print(f"   ✓ Imagem solicitada com sucesso: ID {new_ami_id}")
-    print("   Aguardando estado 'available' da AMI na AWS (~3 a 5 minutos)...")
+    try:
+        # 3. Criar a Golden AMI a partir do disco limpo e parado
+        print(f"\n[3/4] Congelando disco e gerando Golden AMI '{ami_name}'...")
+        img_resp = ec2.create_image(
+            InstanceId=instance_id,
+            Name=ami_name,
+            Description=f"SQLArena {role.upper()} Golden AMI ({timestamp})",
+            NoReboot=True,
+            TagSpecifications=[
+                {
+                    "ResourceType": "image",
+                    "Tags": [
+                        {"Key": "Name", "Value": ami_name},
+                        {"Key": "Project", "Value": "sqlarena"},
+                        {"Key": "Role", "Value": role}
+                    ]
+                }
+            ]
+        )
+        new_ami_id = img_resp["ImageId"]
+        print(f"   ✓ Imagem solicitada com sucesso: ID {new_ami_id}")
+        print("   Aguardando estado 'available' da AMI na AWS (~3 a 5 minutos)...")
 
-    ami_start = time.time()
-    while True:
-        time.sleep(10)
-        ami_elapsed = int(time.time() - ami_start)
-        ami_resp = ec2.describe_images(ImageIds=[new_ami_id])
-        ami_state = ami_resp["Images"][0]["State"]
-        if ami_state == "available":
-            print(f"\n   ✓ Golden AMI pronta para uso em {ami_elapsed}s: {new_ami_id}")
-            break
-        elif ami_state == "failed":
-            raise RuntimeError(f"Criação da AMI {new_ami_id} falhou na AWS.")
-        elif ami_elapsed > 600:
-            raise TimeoutError(f"Tempo limite ({ami_elapsed}s) excedido aguardando AMI ficar disponível.")
-        print(f"   ⏳ [{ami_elapsed:3d}s decorridos] Snapshot EBS em andamento (Estado: {ami_state})...")
+        ami_start = time.time()
+        while True:
+            time.sleep(10)
+            ami_elapsed = int(time.time() - ami_start)
+            ami_resp = ec2.describe_images(ImageIds=[new_ami_id])
+            ami_state = ami_resp["Images"][0]["State"]
+            if ami_state == "available":
+                print(f"\n   ✓ Golden AMI pronta para uso em {ami_elapsed}s: {new_ami_id}")
+                break
+            elif ami_state == "failed":
+                raise RuntimeError(f"Criação da AMI {new_ami_id} falhou na AWS.")
+            elif ami_elapsed > 600:
+                raise TimeoutError(f"Tempo limite ({ami_elapsed}s) excedido aguardando AMI ficar disponível.")
+            print(f"   ⏳ [{ami_elapsed:3d}s decorridos] Snapshot EBS em andamento (Estado: {ami_state})...")
 
-    # 4. Excluir a instância temporária
-    print(f"\n[4/4] Limpando e terminando a instância temporária {instance_id}...")
-    ec2.terminate_instances(InstanceIds=[instance_id])
-    print(f"   ✓ Instância temporária encerrada.")
+        return new_ami_id
 
-    return new_ami_id
+    finally:
+        # 4. Excluir a instância temporária sempre (sucesso ou falha)
+        print(f"\n[4/4] Limpando e terminando a instância temporária {instance_id}...")
+        try:
+            ec2.terminate_instances(InstanceIds=[instance_id])
+            print(f"   ✓ Instância temporária encerrada.")
+        except Exception as e:
+            print(f"   [Aviso] Falha ao encerrar instância {instance_id}: {e}")
 
 def main():
     parser = argparse.ArgumentParser(description="Criador Automático de Golden AMIs do SQLArena")
