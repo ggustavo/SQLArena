@@ -113,6 +113,17 @@ class SQSQueueManager:
                     raise
         return self._queue_url
 
+    @property
+    def queue_url(self) -> str:
+        """Propriedade conveniente para obter a URL da fila principal."""
+        return self.get_queue_url()
+
+    @property
+    def dlq_url(self) -> Optional[str]:
+        """Propriedade conveniente para obter a URL da DLQ."""
+        return self.get_dlq_url()
+
+
     def get_dlq_url(self) -> Optional[str]:
         """Obtém a URL da fila Dead Letter Queue (DLQ), se existir."""
         if not self._dlq_url:
