@@ -77,9 +77,21 @@ variable "ec2_instance_type" {
 }
 
 variable "ec2_ami" {
-  description = "ID da imagem AMI para a máquina virtual"
+  description = "ID da imagem AMI padrão para a máquina virtual (Ubuntu 22.04 LTS base)"
   type        = string
   default     = "ami-00000001"
+}
+
+variable "web_ami" {
+  description = "ID da Golden AMI customizada para o Web (FastAPI + React). Se vazio, usa ec2_ami base."
+  type        = string
+  default     = ""
+}
+
+variable "worker_ami" {
+  description = "ID da Golden AMI customizada para o Worker (Postgres Sandbox + Python). Se vazio, usa ec2_ami base."
+  type        = string
+  default     = ""
 }
 
 variable "app_port" {

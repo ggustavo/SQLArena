@@ -356,8 +356,29 @@ s3_bucket_name = "sqlarena-questions-bucket-academy-gustavo"
 
 ---
 
-### 4. Executar o Provisionamento no AWS Academy
-No PowerShell dentro da pasta `terraform/`:
+### 4. (Recomendado) Gerar as Golden AMIs para Boot em 15 segundos
+Para que o Auto Scaling suba novas máquinas em **apenas 15 segundos** (em vez de esperar 4 minutos instalando tudo do zero a cada máquina que nasce), geramos as Golden AMIs **antes** do apply:
+
+```powershell
+# Na raiz do projeto:
+python terraform/scripts/build_golden_amis.py
+```
+
+> 💡 **O que o script faz sozinho para você:**
+> 1. Lê suas credenciais da AWS em `terraform/credentials.auto.tfvars`.
+> 2. Sobe as máquinas temporárias de build na AWS e executa os scripts salvos em [`terraform/scripts/`](terraform/scripts/):
+>    * [`setup_worker.sh`](terraform/scripts/setup_worker.sh): Instala PostgreSQL Sandbox local, Python e dependências do Worker.
+>    * [`setup_web.sh`](terraform/scripts/setup_web.sh): Instala Node.js 20, compila a SPA React (`npm run build`) e prepara a API FastAPI.
+> 3. As máquinas **desligam sozinhas** automaticamente quando a instalação termina.
+> 4. O script congela os discos, gera as AMIs e **atualiza automaticamente** o arquivo [`terraform/envs/aws.tfvars`](terraform/envs/aws.tfvars) com `web_ami` e `worker_ami`.
+> 5. Exclui as máquinas temporárias de build.
+>
+> *(Nota: Se você preferir não rodar esse script, o Terraform usará a AMI pública do Ubuntu e fará a instalação completa no boot das máquinas).*
+
+---
+
+### 5. Executar o Provisionamento no AWS Academy (Terraform Apply)
+Com as credenciais e as variáveis configuradas, execute o deploy:
 
 ```powershell
 cd terraform
@@ -365,54 +386,16 @@ cd terraform
 # 1. Inicializar os provedores:
 terraform init
 
-# 2. Visualizar o plano de recursos:
-terraform plan -var-file="envs/aws.tfvars"
-
-# 3. Aplicar e provisionar a infraestrutura completa na nuvem:
+# 2. Aplicar e provisionar a infraestrutura completa na nuvem:
 terraform apply -var-file="envs/aws.tfvars"
 ```
 
----
-
-### 5. O Que o Terraform Cria na AWS Real
-
-* 🌐 **VPC Própria:** Rede isolada com subnets públicas e privadas distribuídas nas Availability Zones `us-east-1a` e `us-east-1b`, Internet Gateway e Route Tables.
-* ⚖️ **Application Load Balancer (ALB):** Ponto de entrada público HTTP (Porta 80) balanceando tráfego entre instâncias da Camada Web.
-* 📈 **Auto Scaling Group Web (Frontend + Backend):** Instâncias EC2 em subnet pública executando FastAPI e servindo o Frontend React compilado na porta 8000, com Target Tracking baseado em utilização de CPU.
-* ⚡ **Auto Scaling Group Workers (Sandbox):** Instâncias EC2 dedicadas ao consumo da fila SQS, com políticas de escala baseadas na métrica `ApproximateNumberOfMessagesVisible` da fila SQS.
-* 🗄️ **AWS RDS PostgreSQL 16:** Banco de dados relacional gerenciado em Subnet Group dedicada com isolamento por Security Group.
-* 🏎️ **AWS ElastiCache Redis:** Cluster em memória gerenciado em Subnet Group própria para rate limiting (5s) e cache de hashes SHA-256.
-* 🪣 **Amazon S3:** Bucket para armazenamento dos scripts DDL/DML de preparação e teardown de cada questão.
-* 📬 **Amazon SQS + DLQ:** Fila de mensageria assíncrona desacoplada com Dead Letter Queue após 3 tentativas de falha.
-* 📄 **Amazon DynamoDB:** Tabelas NoSQL em modo On-Demand para histórico de submissões e logs de auditoria.
+> ⚖️ **Como a Golden AMI se conecta ao RDS, Redis e S3?**
+> A Golden AMI já vem com os binários e dependências instalados no disco. Quando o Auto Scaling inicia a máquina, o Terraform injeta as variáveis dinâmicas (endereço do RDS criado, host do Redis, nome da fila SQS) no arquivo `/opt/sqlarena/app/.env` em **1 segundo**, e inicia os serviços. Para o S3 e DynamoDB, as EC2s usam a IAM Role (`LabInstanceProfile`) para autenticação automática sem necessidade de senhas fixas.
 
 ---
 
-### 6. Como a AWS Inicializa a Aplicação (Bootstrapping Automático)
-
-Você **não precisa conectar via SSH** nas máquinas para subir nada manual. Os scripts `user_data` definidos no Terraform cuidam do ciclo de vida completo:
-
-1. **Camada Web (EC2 Web):**
-   * Clona o repositório oficial do projeto: `git clone https://github.com/Gustav0Carvalho/SQLArena.git`
-   * Instala dependências de sistema (Python 3.11, Node.js 20, Git, PostgreSQL client)
-   * Instala dependências do frontend e compila a SPA React (`npm install && npm run build`) gerando `frontend/dist/`
-   * Configura as variáveis de ambiente com os endpoints reais do RDS, Redis, SQS, S3 e DynamoDB
-   * Executa o `seed.py`, criando as tabelas, validando as 21 questões com `QuestionValidator` e populando os dados iniciais
-   * Inicia o Uvicorn como serviço gerenciado pelo systemd (`sqlarena-web.service`)
-   * O FastAPI serve a SPA React diretamente pelo endpoint raiz e a API REST em `/api/...`
-
-2. **Camada de Workers (EC2 Worker):**
-   * Clona o repositório
-   * Instala as dependências Python
-   * Inicia o daemon consumidor da fila SQS como serviço do systemd (`sqlarena-worker.service`)
-   * O Worker consome as mensagens da fila SQS, valida a consulta em sandbox no RDS e registra os resultados no DynamoDB
-
-> ⏳ **Tempo de inicialização (Bootstrapping):**
-> O processo de download de pacotes, build do React e execução do seed leva aproximadamente **3 a 4 minutos** após o `terraform apply` concluir. Aguarde esse intervalo para acessar a aplicação.
-
----
-
-### 7. Acessar a Aplicação na Nuvem
+### 6. Acessar a Aplicação na Nuvem
 
 Após o término do `terraform apply`, visualize a URL pública do Load Balancer exibida nos outputs:
 
@@ -428,7 +411,7 @@ Abra seu navegador e acesse:
 
 ---
 
-### 8. Monitoramento e Diagnóstico na Nuvem
+### 7. Monitoramento e Diagnóstico na Nuvem
 
 Se precisar inspecionar o funcionamento dos serviços dentro das instâncias EC2:
 * **Logs da Camada Web (FastAPI + SPA):**
@@ -446,13 +429,21 @@ Se precisar inspecionar o funcionamento dos serviços dentro das instâncias EC2
 
 ---
 
-### 9. Destruir os Recursos no AWS Academy (Liberar Créditos)
+### 8. Destruir os Recursos e Excluir AMIs/Snapshots (Custo Zero Garantido)
 
-Quando finalizar os testes ou a apresentação, destrua todos os recursos da nuvem para não esgotar os créditos do seu Learner Lab:
+Para não consumir créditos da sua conta e garantir que **absolutamente tudo** seja eliminado (instâncias EC2, banco RDS e dados, tabelas DynamoDB, cluster Redis, filas SQS, bucket S3 com arquivos, **e também as Golden AMIs e Snapshots EBS**):
+
+#### Opção A (Pelo Terraform - Recomendado):
+O arquivo [`ami_lifecycle.tf`](terraform/ami_lifecycle.tf) chama automaticamente a rotina de exclusão das AMIs e Snapshots no destroy:
 
 ```powershell
 cd terraform
 terraform destroy -var-file="envs/aws.tfvars"
+```
+
+#### Opção B (Via Script de Destruição Total):
+```powershell
+python terraform/scripts/destroy_all.py --var-file="envs/aws.tfvars"
 ```
 
 ---

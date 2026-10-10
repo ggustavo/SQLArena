@@ -2,7 +2,7 @@
 # Launch Template para as instâncias da API Web
 resource "aws_launch_template" "web_lt" {
   name_prefix   = "${var.project_name}-web-"
-  image_id      = var.ec2_ami
+  image_id      = var.web_ami != "" ? var.web_ami : var.ec2_ami
   instance_type = var.ec2_instance_type
 
   vpc_security_group_ids = [aws_security_group.web_sg.id]
@@ -19,6 +19,43 @@ resource "aws_launch_template" "web_lt" {
 set -e
 exec > >(tee -a /var/log/user_data.log /var/log/cloud-init-output.log) 2>&1
 echo "=== Inicializando no Web SQLArena (Frontend + Backend FastAPI) ==="
+
+# 0. Verificacao de Golden AMI: Se pacotes e build ja existirem, inicializa em ~15s
+if [ -d "/opt/sqlarena/frontend/dist" ] && [ -f "/opt/sqlarena/app/.venv/bin/python" ]; then
+    echo "=== [Golden AMI Detectada] Dependencias e frontend ja compilados! ==="
+    cat <<EOT > /opt/sqlarena/app/.env
+ENVIRONMENT=production
+APP_PORT=${var.app_port}
+SECRET_KEY=sqlarena-production-super-secret-key-32chars-min
+INTERNAL_API_KEY=sqlarena-internal-service-secret-key-32chars
+ALGORITHM=HS256
+ACCESS_TOKEN_EXPIRE_MINUTES=10080
+
+DATABASE_URL=postgresql+psycopg2://${var.db_username}:${var.db_password}@${aws_db_instance.postgres.address}:${aws_db_instance.postgres.port}/${var.db_name}
+RDS_HOST=${aws_db_instance.postgres.address}
+RDS_PORT=${aws_db_instance.postgres.port}
+RDS_USER=${var.db_username}
+RDS_PASSWORD=${var.db_password}
+RDS_DB_NAME=${var.db_name}
+
+REDIS_URL=redis://${aws_elasticache_cluster.redis.cache_nodes[0].address}:6379/0
+REDIS_HOST=${aws_elasticache_cluster.redis.cache_nodes[0].address}
+REDIS_PORT=6379
+
+AWS_REGION=${var.aws_region}
+S3_BUCKET_NAME=${var.s3_bucket_name}
+DYNAMO_SUBMISSIONS_TABLE=${aws_dynamodb_table.submissions_log.name}
+DYNAMO_CRUD_TABLE_NAME=${aws_dynamodb_table.crud_actions_log.name}
+SQS_QUEUE_NAME=${aws_sqs_queue.submissions_queue.name}
+SQS_DLQ_NAME=${aws_sqs_queue.submissions_dlq.name}
+EOT
+
+    sudo systemctl daemon-reload
+    sudo systemctl enable sqlarena-web.service
+    sudo systemctl restart sqlarena-web.service
+    echo "=== No Web SQLArena inicializado com sucesso via Golden AMI em ~15s ==="
+    exit 0
+fi
 
 # 1. Atualizar SO e instalar dependencias basicas
 sudo apt-get update -y

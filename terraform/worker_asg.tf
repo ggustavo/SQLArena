@@ -6,7 +6,7 @@
 # Launch Template do Worker (AMI e configurações de boot em Sandbox)
 resource "aws_launch_template" "worker_lt" {
   name_prefix   = "${var.project_name}-worker-lt-"
-  image_id      = var.ec2_ami
+  image_id      = var.worker_ami != "" ? var.worker_ami : var.ec2_ami
   instance_type = var.ec2_instance_type
 
   vpc_security_group_ids = [aws_security_group.worker_sg.id]
@@ -23,6 +23,29 @@ resource "aws_launch_template" "worker_lt" {
 set -e
 exec > >(tee -a /var/log/user_data.log /var/log/cloud-init-output.log) 2>&1
 echo "=== Inicializando no Worker SQLArena (Processamento SQS) ==="
+
+# 0. Verificacao de Golden AMI: Se PostgreSQL local e venv ja existirem, inicializa em ~15s
+if [ -d "/opt/sqlarena" ] && [ -f "/opt/sqlarena/app/.venv/bin/python" ]; then
+    echo "=== [Golden AMI Detectada] PostgreSQL e Worker ja configurados! ==="
+    cat <<EOT > /opt/sqlarena/app/.env
+ENVIRONMENT=production
+SANDBOX_DATABASE_URL=postgresql://sandbox:sandboxpass@localhost:5432/sandbox_db
+BACKEND_INTERNAL_URL=http://${aws_lb.api_alb.dns_name}
+INTERNAL_API_KEY=sqlarena-internal-service-secret-key-32chars
+
+AWS_REGION=${var.aws_region}
+S3_BUCKET_NAME=${var.s3_bucket_name}
+SQS_QUEUE_NAME=${aws_sqs_queue.submissions_queue.name}
+SQS_DLQ_NAME=${aws_sqs_queue.submissions_dlq.name}
+EOT
+
+    sudo systemctl restart postgresql || sudo systemctl start postgresql
+    sudo systemctl daemon-reload
+    sudo systemctl enable sqlarena-worker.service
+    sudo systemctl restart sqlarena-worker.service
+    echo "=== Worker SQLArena inicializado com sucesso via Golden AMI em ~15s ==="
+    exit 0
+fi
 
 # 1. Atualizar SO e instalar dependencias (incluindo PostgreSQL local para Sandbox)
 sudo apt-get update -y

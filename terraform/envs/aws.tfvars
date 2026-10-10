@@ -19,8 +19,12 @@ db_password       = "SqlArena2026MasterKey!"
 
 # EC2 e Launch Templates (Ubuntu 22.04 LTS em us-east-1 suportado pelo AWS Academy)
 ec2_instance_type = "t3.micro"
-ec2_ami           = "ami-0c7217cdde317cfec"
+ec2_ami           = "ami-0c7217cdde317cfec" # AMI Ubuntu 22.04 base pública
 app_port          = 8000
+
+# Golden AMIs (Opcional - preencha para boot em 15s; se vazio, usa a ec2_ami base com bootstrap completo)
+web_ami           = "" # Ex: "ami-0123456789abcdef0"
+worker_ami        = "" # Ex: "ami-0fedcba9876543210"
 
 # Amazon SQS
 sqs_queue_name    = "sqlarena-submissions-queue"
