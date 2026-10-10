@@ -140,20 +140,40 @@ def build_single_ami(ec2, role: str, base_ami: str, instance_type: str) -> str:
     print(f"   (A máquina instalará pacotes e serviços, e desligará sozinha ao concluir)")
 
     start_wait = time.time()
-    waiter = ec2.get_waiter("instance_stopped")
+    max_wait_seconds = 600  # 10 minutos limite
+    poll_interval = 15
+
     try:
-        waiter.wait(
-            InstanceIds=[instance_id],
-            WaiterConfig={"Delay": 15, "MaxAttempts": 32}
-        )
+        while True:
+            time.sleep(poll_interval)
+            elapsed = int(time.time() - start_wait)
+
+            resp = ec2.describe_instances(InstanceIds=[instance_id])
+            state = resp["Reservations"][0]["Instances"][0]["State"]["Name"]
+
+            if state == "stopped":
+                print(f"\n   ✓ Instalação finalizada com sucesso! Máquina desligou em {elapsed}s.")
+                break
+            elif state in ("terminated", "shutting-down"):
+                raise RuntimeError(f"Instância entrou em estado de encerramento inesperado: {state}")
+            elif elapsed > max_wait_seconds:
+                raise TimeoutError(f"Tempo limite ({max_wait_seconds}s) excedido aguardando máquina desligar. Estado atual: {state}")
+
+            status_desc = {
+                "pending": "Inicializando hardware na AWS...",
+                "running": "Executando scripts de instalação e build...",
+                "stopping": "Finalizando serviços e desligando..."
+            }.get(state, state)
+            print(f"   ⏳ [{elapsed:3d}s decorridos] Estado: {state} ({status_desc})")
+
     except Exception as ex:
         print(f"\n⚠ Falha ou tempo limite aguardando desligamento da máquina {instance_id}: {ex}")
         print("Cancelando instância temporária...")
-        ec2.terminate_instances(InstanceIds=[instance_id])
+        try:
+            ec2.terminate_instances(InstanceIds=[instance_id])
+        except Exception:
+            pass
         raise
-
-    elapsed = int(time.time() - start_wait)
-    print(f"   ✓ Instalação finalizada com sucesso! Máquina desligou em {elapsed}s.")
 
     # 3. Criar a Golden AMI a partir do disco limpo e parado
     print(f"\n[3/4] Congelando disco e gerando Golden AMI '{ami_name}'...")
@@ -175,14 +195,22 @@ def build_single_ami(ec2, role: str, base_ami: str, instance_type: str) -> str:
     )
     new_ami_id = img_resp["ImageId"]
     print(f"   ✓ Imagem solicitada com sucesso: ID {new_ami_id}")
-    print("   Aguardando estado 'available' na AWS...")
+    print("   Aguardando estado 'available' da AMI na AWS (~3 a 5 minutos)...")
 
-    ami_waiter = ec2.get_waiter("image_available")
-    ami_waiter.wait(
-        ImageIds=[new_ami_id],
-        WaiterConfig={"Delay": 10, "MaxAttempts": 30}
-    )
-    print(f"   ✓ Golden AMI pronta para uso: {new_ami_id}")
+    ami_start = time.time()
+    while True:
+        time.sleep(10)
+        ami_elapsed = int(time.time() - ami_start)
+        ami_resp = ec2.describe_images(ImageIds=[new_ami_id])
+        ami_state = ami_resp["Images"][0]["State"]
+        if ami_state == "available":
+            print(f"\n   ✓ Golden AMI pronta para uso em {ami_elapsed}s: {new_ami_id}")
+            break
+        elif ami_state == "failed":
+            raise RuntimeError(f"Criação da AMI {new_ami_id} falhou na AWS.")
+        elif ami_elapsed > 600:
+            raise TimeoutError(f"Tempo limite ({ami_elapsed}s) excedido aguardando AMI ficar disponível.")
+        print(f"   ⏳ [{ami_elapsed:3d}s decorridos] Snapshot EBS em andamento (Estado: {ami_state})...")
 
     # 4. Excluir a instância temporária
     print(f"\n[4/4] Limpando e terminando a instância temporária {instance_id}...")
