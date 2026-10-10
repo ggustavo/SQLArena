@@ -60,7 +60,7 @@ class QuestionValidator:
         # Requisito 5: Validação da presença obrigatória de ORDER BY
         if not re.search(r"\bORDER\s+BY\b", clean_answer, re.IGNORECASE):
             raise QuestionValidationError(
-                "Erro de Validação (Requisito 5): A consulta gabarito (answer.sql) DEVE conter "
+                "Erro de Validação: A consulta gabarito (answer.sql) DEVE conter "
                 "cláusula ORDER BY para garantir determinismo no teste de gabarito."
             )
 

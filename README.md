@@ -463,3 +463,58 @@ python app/testes/main_s3.py
 python app/testes/main_sqs.py
 python app/testes/main_dynamodb.py
 ```
+
+---
+
+## ⚡ Teste de Carga e Auto Scaling com Locust
+
+O projeto inclui um cenário completo de teste de estresse em [`locustfile.py`](locustfile.py) que simula o comportamento real de centenas de alunos e instrutores simultâneos:
+* Cadastro automático e autenticação com JWT
+* Navegação pelo catálogo e abertura de detalhes de exercícios
+* Submissão assíncrona de consultas SQL com mix probabilístico realista:
+  * **60% Gabarito Correto (`SUCCESS`):** valida SHA-256 no worker, pontua no RDS, invalida e reaquece o cache de Ranking no Redis e loga no DynamoDB.
+  * **20% Resposta Incorreta (`WRONG_ANSWER`):** compara hash divergente e audita no DynamoDB.
+  * **15% Erro de Sintaxe (`SYNTAX_ERROR`):** dispara rollback na sandbox e registra log no DynamoDB.
+  * **5% Comando Proibido (`BLOCKED_DML`):** intercepta tentativa destrutiva (`DROP`, `DELETE`).
+* Polling assíncrono dos resultados até conclusão pelo Worker.
+* Consulta contínua ao ranking (testando o cache do Redis sob alta concorrência).
+* Ações administrativas do Instrutor (inspeção de logs de auditoria no DynamoDB).
+
+### 1. Executando Localmente (com Interface Gráfica Web)
+
+Com o backend ativo em um terminal (`uvicorn app.main:app --port 8000`) e o worker em outro (`python app/worker/main.py`), execute:
+
+```powershell
+app\.venv\Scripts\locust.exe -f locustfile.py --host http://localhost:8000
+```
+
+1. Abra seu navegador em: **[http://localhost:8089](http://localhost:8089)**
+2. Defina o **Number of users** (ex: `20` ou `50`) e o **Spawn rate** (ex: `5`).
+3. Clique em **Start swarming** e acompanhe os gráficos de RPS, tempos de resposta e falhas em tempo real!
+
+### 2. Estressando o Auto Scaling na AWS (Load Balancer Real)
+
+Após aplicar o Terraform na AWS, utilize a URL pública do Load Balancer (`alb_dns_name`):
+
+```powershell
+app\.venv\Scripts\locust.exe -f locustfile.py --host http://<alb_dns_name>
+```
+
+#### O que observar na AWS enquanto o Locust roda:
+1. **Auto Scaling de Web (`asg_web`):**
+   * No console da AWS, vá em **EC2 > Auto Scaling Groups > `sqlarena-web-asg`**.
+   * Quando o tráfego dos alunos virtuais elevar a CPU das instâncias acima de 70%, o Auto Scaling adicionará novas instâncias EC2 automaticamente.
+2. **Auto Scaling de Workers (`worker_asg`):**
+   * No console da AWS, vá em **CloudWatch > Alarms** e observe a fila **SQS**.
+   * O acúmulo de submissões na fila acionará o alarme de backlog, fazendo o Auto Scaling Group de workers escalar novas instâncias para zerar a fila.
+3. **Escala para Baixo (Scale Down):**
+   * Quando você parar o teste no Locust, o tráfego e a fila voltam a zero e a AWS desliga as instâncias excedentes com segurança.
+
+### 3. Modo Headless (Execução rápida via terminal sem interface web)
+
+Para rodar um teste automatizado de 30 segundos com 10 usuários direto no terminal:
+
+```powershell
+app\.venv\Scripts\locust.exe -f locustfile.py --host http://localhost:8000 --users 10 --spawn-rate 2 --run-time 30s --headless
+```
+

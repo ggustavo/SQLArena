@@ -13,8 +13,8 @@ class Settings(BaseSettings):
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24 * 7  # 7 dias
 
     # PostgreSQL RDS (Apenas Backend)
-    DATABASE_URL: str = "postgresql+psycopg2://postgres:postgrespassword@localhost:15432/app_db"
-    RDS_HOST: str = "localhost"
+    DATABASE_URL: str = "postgresql+psycopg2://postgres:postgrespassword@127.0.0.1:15432/app_db"
+    RDS_HOST: str = "127.0.0.1"
     RDS_PORT: int = 15432
     RDS_USER: str = "postgres"
     RDS_PASSWORD: str = "postgrespassword"
@@ -24,13 +24,14 @@ class Settings(BaseSettings):
     SANDBOX_DATABASE_URL: Optional[str] = None
 
     # Comunicação Interna Worker -> Backend
-    BACKEND_INTERNAL_URL: str = "http://localhost:8000"
+    BACKEND_INTERNAL_URL: str = "http://127.0.0.1:8000"
     INTERNAL_API_KEY: str = "sqlarena-internal-service-secret-key-32chars"
 
     # Redis ElastiCache
-    REDIS_URL: str = "redis://localhost:16379/0"
-    REDIS_HOST: str = "localhost"
+    REDIS_URL: str = "redis://127.0.0.1:16379/0"
+    REDIS_HOST: str = "127.0.0.1"
     REDIS_PORT: int = 16379
+
 
     # AWS / Ministack (nulos por padrão para AWS real/produção; app/.env local sobrescreve para Ministack)
     AWS_ENDPOINT_URL: Optional[str] = None

@@ -25,6 +25,12 @@ for _p in [str(_project_root), str(_app_dir)]:
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+if hasattr(sys.stderr, "reconfigure"):
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
+
 try:
     from app.dynamodb.dynamo_manager import DynamoDBManager
 except ImportError:

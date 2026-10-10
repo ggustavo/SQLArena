@@ -33,11 +33,102 @@ class SandboxExecutor:
         self.s3 = S3Manager()
         raw_url = settings.SANDBOX_DATABASE_URL or settings.DATABASE_URL
         self.db_url = raw_url.replace("postgresql+psycopg2://", "postgresql://")
+        # Normalização preventiva: se contiver localhost, usa 127.0.0.1 para evitar o timeout de 2s IPv6 do Windows
+        if "@localhost:" in self.db_url:
+            self.db_url = self.db_url.replace("@localhost:", "@127.0.0.1:")
+
         # Cache em memória RAM dos hashes oficiais de cada questão
         self.cached_hashes: Dict[int, str] = {}
 
-    def _get_connection(self):
-        return psycopg2.connect(self.db_url)
+        # Conexão persistente de alta performance mantida com o PostgreSQL local
+        self._conn: Optional[Any] = None
+        self._retry_attempts = 3
+        self._backoff_seconds = 1800  # 30 minutos (1800 segundos)
+        self._reconnect_backoff_until = 0.0
+
+    def get_connection(self):
+        """
+        Retorna a conexão persistente e ativa com o PostgreSQL Sandbox local.
+        Aplica política de resiliência estrita:
+        - Verifica integridade da conexão atual (não fechada + ping rápido 'SELECT 1;').
+        - Em caso de queda, tenta reconectar até 3 vezes imediatamente (com intervalo de 2s).
+        - Se as 3 tentativas falharem, entra em backoff de 30 minutos antes de tentar novamente,
+          registrando logs detalhados e auditáveis da indisponibilidade.
+        """
+        now = time.time()
+
+        # 1. Verifica se a conexão existente ainda está saudável
+        if self._conn is not None and not self._conn.closed:
+            try:
+                with self._conn.cursor() as cur:
+                    cur.execute("SELECT 1;")
+                return self._conn
+            except Exception as test_ex:
+                logger.warning(
+                    f"   [PostgreSQL Sandbox AVISO] Conexão ativa interrompida ({test_ex}). "
+                    f"Iniciando ciclo de reconexão..."
+                )
+                try:
+                    self._conn.close()
+                except Exception:
+                    pass
+                self._conn = None
+
+        # 2. Verifica se está em período de espera pós-falha (backoff de 30 minutos)
+        if now < self._reconnect_backoff_until:
+            tempo_restante_min = round((self._reconnect_backoff_until - now) / 60, 1)
+            msg = (
+                f"[PostgreSQL Sandbox ERRO CRÍTICO] Conexão com o banco local bloqueada em backoff. "
+                f"Próxima tentativa liberada em {tempo_restante_min} minuto(s)."
+            )
+            logger.error(msg)
+            raise ConnectionError(msg)
+
+        # 3. Política de reconexão: tenta até 3 vezes
+        last_error = None
+        for tentativa in range(1, self._retry_attempts + 1):
+            try:
+                logger.info(
+                    f"   [PostgreSQL Sandbox] Tentativa de conexão {tentativa}/{self._retry_attempts} "
+                    f"com banco local..."
+                )
+                conn = psycopg2.connect(self.db_url)
+                conn.autocommit = True
+                self._conn = conn
+                self._reconnect_backoff_until = 0.0
+                logger.info(
+                    f"   ✓ [PostgreSQL Sandbox Conectado] Conexão persistente estabelecida com sucesso "
+                    f"na tentativa {tentativa}!"
+                )
+                return self._conn
+            except Exception as conn_err:
+                last_error = conn_err
+                logger.error(
+                    f"   [PostgreSQL Sandbox ERRO] Falha na tentativa {tentativa}/{self._retry_attempts}: {conn_err}"
+                )
+                if tentativa < self._retry_attempts:
+                    time.sleep(2)
+
+        # 4. Falha persistente após 3 tentativas: ativa backoff de 30 minutos
+        self._reconnect_backoff_until = now + self._backoff_seconds
+        logger.critical(
+            f"   🚨 [PostgreSQL Sandbox FALHA PERSISTENTE] Não foi possível conectar ao banco de dados local "
+            f"após {self._retry_attempts} tentativas consecutivas. Causa: {last_error}. "
+            f"Próxima tentativa de reconexão agendada para daqui a {self._backoff_seconds // 60} minutos."
+        )
+        raise ConnectionError(
+            f"Falha ao conectar com PostgreSQL Sandbox após {self._retry_attempts} tentativas: {last_error}"
+        )
+
+    def close(self):
+        """Encerra a conexão persistente com o PostgreSQL Sandbox de forma graciosa."""
+        if self._conn is not None and not self._conn.closed:
+            try:
+                self._conn.close()
+                logger.info("   [PostgreSQL Sandbox] Conexão persistente encerrada.")
+            except Exception:
+                pass
+            self._conn = None
 
     def ensure_schema_bootstrapped(self, question_id: int) -> Dict[str, Any]:
         """
@@ -47,8 +138,7 @@ class SandboxExecutor:
         """
         bootstrap_start = time.perf_counter()
         schema_name = f"pergunta_{question_id}"
-        conn = self._get_connection()
-        conn.autocommit = True
+        conn = self.get_connection()
         metrics = {
             "source": "LOCAL_CACHE",
             "durationMs": 0.0,
@@ -72,6 +162,7 @@ class SandboxExecutor:
                     if question_id not in self.cached_hashes:
                         logger.info(f"   [RAM Cache Miss] Recuperando hash do gabarito para memória RAM (Questão #{question_id})...")
                         self._load_official_hash_from_s3_and_sandbox(question_id, cur, schema_name)
+                    conn.commit()
                     metrics["durationMs"] = round((time.perf_counter() - bootstrap_start) * 1000, 2)
                     logger.info(f"   ✓ [Schema Cache Local] Schema '{schema_name}' verificado no PostgreSQL local em {metrics['durationMs']:.2f} ms.")
                     return metrics
@@ -95,6 +186,7 @@ class SandboxExecutor:
 
                 # Cria o schema no PostgreSQL local e popula tabelas e dados
                 sql_exec_start = time.perf_counter()
+                cur.execute("SET default_transaction_read_only = off;")
                 cur.execute(sql.SQL("CREATE SCHEMA IF NOT EXISTS {};").format(sql.Identifier(schema_name)))
                 cur.execute(sql.SQL("SET search_path TO {}, public;").format(sql.Identifier(schema_name)))
 
@@ -121,11 +213,17 @@ class SandboxExecutor:
                         f"{official_hash[:16]}... (Total Hashes em RAM: {len(self.cached_hashes)})"
                     )
 
+                cur.execute("SET default_transaction_read_only = on;")
+                conn.commit()
                 metrics["durationMs"] = round((time.perf_counter() - bootstrap_start) * 1000, 2)
                 logger.info(f"   ✓ [Bootstrap Concluído] Schema '{schema_name}' pronto no PostgreSQL local em {metrics['durationMs']:.2f} ms.")
                 return metrics
-        finally:
-            conn.close()
+        except Exception:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+            raise
 
     def _load_official_hash_from_s3_and_sandbox(self, question_id: int, cur, schema_name: str):
         """Calcula o hash oficial a partir do answer.sql e armazena na memória do Worker."""
@@ -247,15 +345,17 @@ class SandboxExecutor:
             }
 
         schema_name = f"pergunta_{question_id}"
-        conn = self._get_connection()
+        conn = self.get_connection()
         try:
-            conn.set_session(readonly=True, autocommit=False)
             with conn.cursor() as cur:
                 # ---------------------------------------------------------
                 # PASSO 3: Configuração de Limites e Execução da Query
                 # ---------------------------------------------------------
+                cur.execute("SET default_transaction_read_only = on;")
                 cur.execute("SET statement_timeout = '3000';")  # Timeout rígido de 3 segundos
                 cur.execute(sql.SQL("SET search_path TO {}, public;").format(sql.Identifier(schema_name)))
+
+
 
                 logger.info(f"   [PASSO 3/4 - EXECUÇÃO PG] Disparando consulta no PostgreSQL local (Timeout: 3000 ms, Modo: READ ONLY)...")
                 t_query_start = time.perf_counter()
@@ -364,5 +464,8 @@ class SandboxExecutor:
                 "audit": audit,
             }
         finally:
-            conn.rollback()
-            conn.close()
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+

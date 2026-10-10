@@ -74,6 +74,8 @@ class SubmissionWorker:
         Retorna (sucesso, dados_da_resposta, tempo_em_ms).
         """
         callback_url = f"{settings.BACKEND_INTERNAL_URL.rstrip('/')}/api/submissions/callback"
+        if "://localhost:" in callback_url:
+            callback_url = callback_url.replace("://localhost:", "://127.0.0.1:")
         headers = {"x-internal-key": settings.INTERNAL_API_KEY}
         t0 = time.perf_counter()
 
@@ -300,9 +302,11 @@ def start_worker():
         worker.running = False
 
     signal.signal(signal.SIGINT, handle_signal)
-    signal.signal(signal.SIGTERM, handle_signal)
-
-    worker.run()
+    try:
+        worker.run()
+    finally:
+        worker.executor.close()
 
 if __name__ == "__main__":
     start_worker()
+

@@ -5,7 +5,7 @@ is_local       = true
 aws_region     = "us-east-1"
 aws_access_key = "test"
 aws_secret_key = "test"
-local_endpoint = "http://localhost:4566"
+local_endpoint = "http://127.0.0.1:4566"
 
 # RDS
 db_name        = "app_db"
