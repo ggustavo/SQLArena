@@ -58,6 +58,8 @@ terraform.rc
 *.auto.tfvars
 credentials.auto.tfvars
 amis.auto.tfvars
+credentials.tfvars
+**/credentials.tfvars
 *.credentials.tfvars
 
 # Frontend (Node / Vite)

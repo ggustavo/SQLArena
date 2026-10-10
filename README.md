@@ -130,7 +130,7 @@ O projeto foi desenhado para funcionar de forma idêntica em dois cenários:
 | :--- | :--- | :--- |
 | **Infraestrutura Base** | Docker Compose: Postgres 16 + Redis 7 + Ministack AWS | AWS Gerenciada (RDS Postgres, ElastiCache Redis, VPC, Subnets) |
 | **Serviços AWS Emulados** | S3, SQS, DynamoDB no Ministack (Porta 4566) | S3, SQS + DLQ, DynamoDB nativos da AWS |
-| **Terraform Workspace** | `envs/local.tfvars` | `envs/aws.tfvars` + `credentials.auto.tfvars` |
+| **Terraform Workspace** | `envs/local.tfvars` | `envs/aws.tfvars` + `envs/credentials.tfvars` |
 | **Camada Web** | Terminal 1 (`uvicorn`) + Terminal 3 (`npm run dev`) | Instâncias EC2 gerenciadas por Auto Scaling Group (Web ASG) |
 | **Camada de Workers** | Terminal 2 (`python app/worker/main.py`) | Instâncias EC2 gerenciadas por Auto Scaling Group (Worker ASG) |
 | **Ponto de Entrada** | Frontend em `http://localhost:5173` | DNS público do Application Load Balancer (`alb_dns_name`) |
@@ -157,8 +157,11 @@ SQLArena/
 └── terraform/          # Infraestrutura como Código para Ministack e AWS Academy
     ├── envs/
     │   ├── local.tfvars                # Variáveis do ambiente Docker/Ministack
-    │   └── aws.tfvars                  # Configurações para a AWS Nuvem (Região, S3)
-    └── credentials.auto.tfvars.example # Template de credenciais temporárias da AWS
+    │   ├── aws.tfvars                  # Configurações para a AWS Nuvem (Região, S3)
+    │   ├── credentials.tfvars.example  # Template de credenciais temporárias da AWS
+    │   └── credentials.tfvars          # Chaves AWS e Golden AMIs (ignorado pelo Git)
+    ├── scripts/                        # Scripts de automação (AMIs, build e destruição)
+    └── *.tf                            # Definições puras de infraestrutura HCL
 ```
 
 ---
@@ -330,19 +333,15 @@ Quando você for testar ou apresentar o projeto na sua conta da **AWS Academy Le
 ---
 
 ### 2. Configurar as Credenciais Seguras (Ignoradas pelo Git)
-Para garantir que suas chaves temporárias **nunca sejam enviadas para o GitHub**, o repositório já inclui o arquivo `credentials.auto.tfvars` no `.gitignore`.
+Para garantir que suas chaves temporárias **nunca sejam enviadas para o GitHub**, o repositório já inclui o arquivo `credentials.tfvars` no `.gitignore`.
 
-Na pasta `terraform/`, crie o arquivo `credentials.auto.tfvars` (você pode copiar o modelo [`credentials.auto.tfvars.example`](terraform/credentials.auto.tfvars.example)):
+Na pasta `terraform/envs/`, crie o arquivo `credentials.tfvars` (você pode copiar o modelo [`credentials.tfvars.example`](terraform/envs/credentials.tfvars.example)):
 
 ```hcl
 aws_access_key    = "ASIA..."
 aws_secret_key    = "..."
 aws_session_token = "IQoJb3JpZ2luX2VjE..."
 ```
-
-> [!TIP]
-> **Por que o arquivo termina com `.auto.tfvars`?**
-> Todo arquivo com sufixo `.auto.tfvars` é carregado **automaticamente** pelo Terraform em comandos como `plan`, `apply` e `destroy`, sem que você precise passar nenhum parâmetro de credencial na linha de comando. E graças ao `.gitignore`, suas chaves permanecem 100% seguras na sua máquina.
 
 ---
 
@@ -365,12 +364,12 @@ python terraform/scripts/build_golden_amis.py
 ```
 
 > 💡 **O que o script faz sozinho para você:**
-> 1. Lê suas credenciais da AWS em `terraform/credentials.auto.tfvars`.
+> 1. Lê suas credenciais da AWS em `terraform/envs/credentials.tfvars`.
 > 2. Sobe as máquinas temporárias de build na AWS e executa os scripts salvos em [`terraform/scripts/`](terraform/scripts/):
 >    * [`setup_worker.sh`](terraform/scripts/setup_worker.sh): Instala PostgreSQL Sandbox local, Python e dependências do Worker.
 >    * [`setup_web.sh`](terraform/scripts/setup_web.sh): Instala Node.js 20, compila a SPA React (`npm run build`) e prepara a API FastAPI.
 > 3. As máquinas **desligam sozinhas** automaticamente quando a instalação termina.
-> 4. O script congela os discos, gera as AMIs e **atualiza automaticamente** o arquivo [`terraform/envs/aws.tfvars`](terraform/envs/aws.tfvars) com `web_ami` e `worker_ami`.
+> 4. O script congela os discos, gera as AMIs e **grava automaticamente** os IDs no arquivo ignorado [`terraform/envs/credentials.tfvars`](terraform/envs/credentials.tfvars).
 > 5. Exclui as máquinas temporárias de build.
 >
 > *(Nota: Se você preferir não rodar esse script, o Terraform usará a AMI pública do Ubuntu e fará a instalação completa no boot das máquinas).*
@@ -387,7 +386,7 @@ cd terraform
 terraform init
 
 # 2. Aplicar e provisionar a infraestrutura completa na nuvem:
-terraform apply -var-file="envs/aws.tfvars"
+terraform apply -var-file="envs/aws.tfvars" -var-file="envs/credentials.tfvars"
 ```
 
 > ⚖️ **Como a Golden AMI se conecta ao RDS, Redis e S3?**

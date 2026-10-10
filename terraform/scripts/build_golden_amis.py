@@ -25,8 +25,10 @@ _terraform_dir = _script_dir.parent
 _project_root = _terraform_dir.parent
 
 def load_credentials_from_tfvars():
-    """Lê as credenciais AWS a partir de terraform/credentials.auto.tfvars."""
-    cred_file = _terraform_dir / "credentials.auto.tfvars"
+    """Lê as credenciais AWS a partir de terraform/envs/credentials.tfvars."""
+    cred_file = _terraform_dir / "envs" / "credentials.tfvars"
+    if not cred_file.exists():
+        cred_file = _terraform_dir / "credentials.auto.tfvars"
     creds = {}
     if cred_file.exists():
         with open(cred_file, "r", encoding="utf-8") as f:
@@ -52,30 +54,40 @@ def get_ec2_client(region="us-east-1"):
     return boto3.client("ec2", **kwargs)
 
 def update_amis_tfvars(web_ami=None, worker_ami=None):
-    """Grava as variáveis web_ami e worker_ami em terraform/amis.auto.tfvars (ignorado pelo git)."""
-    amis_path = _terraform_dir / "amis.auto.tfvars"
-    existing = {}
-    if amis_path.exists():
-        with open(amis_path, "r", encoding="utf-8") as f:
-            for line in f:
-                m = re.match(r'(\w+)\s*=\s*"([^"]*)"', line.strip())
-                if m:
-                    existing[m.group(1)] = m.group(2)
+    """Grava as variáveis web_ami e worker_ami em terraform/envs/credentials.tfvars (ignorado pelo git)."""
+    cred_file = _terraform_dir / "envs" / "credentials.tfvars"
+    lines = []
+    if cred_file.exists():
+        with open(cred_file, "r", encoding="utf-8") as f:
+            lines = f.readlines()
 
+    keys_to_update = {}
     if web_ami:
-        existing["web_ami"] = web_ami
+        keys_to_update["web_ami"] = web_ami
     if worker_ami:
-        existing["worker_ami"] = worker_ami
+        keys_to_update["worker_ami"] = worker_ami
 
-    with open(amis_path, "w", encoding="utf-8") as f:
-        f.write("# ==============================================================================\n")
-        f.write("# Golden AMIs geradas automaticamente por build_golden_amis.py\n")
-        f.write("# Este arquivo e ignorado pelo Git (*.auto.tfvars) e carregado automaticamente!\n")
-        f.write("# ==============================================================================\n")
-        for k in sorted(existing.keys()):
-            f.write(f'{k} = "{existing[k]}"\n')
+    new_lines = []
+    handled_keys = set()
+    for line in lines:
+        matched = False
+        for k, v in keys_to_update.items():
+            if re.match(rf'^{k}\s*=', line.strip()):
+                new_lines.append(f'{k} = "{v}"\n')
+                handled_keys.add(k)
+                matched = True
+                break
+        if not matched:
+            new_lines.append(line)
 
-    print(f"   ✓ [amis.auto.tfvars Atualizado] Novas AMIs salvas em {amis_path.name} (ignorado pelo Git).")
+    for k, v in keys_to_update.items():
+        if k not in handled_keys:
+            new_lines.append(f'{k} = "{v}"\n')
+
+    with open(cred_file, "w", encoding="utf-8") as f:
+        f.writelines(new_lines)
+
+    print(f"   ✓ [credentials.tfvars Atualizado] Novas AMIs salvas em {cred_file.name} (ignorado pelo Git).")
 
 def build_single_ami(ec2, role: str, base_ami: str, instance_type: str) -> str:
     """
