@@ -1601,19 +1601,19 @@
     }
   ],
   "accounts": {
-    "aluno@sqlarena.com": {
+    "gustavo@sqlarena.com": {
       "id": "user_101",
-      "name": "Gustavo Santos",
-      "email": "aluno@sqlarena.com",
+      "name": "Gustavo Moraes",
+      "email": "gustavo@sqlarena.com",
       "role": "STUDENT",
       "score": 180,
       "solvedCount": 5,
       "streakDays": 4
     },
-    "instrutor@sqlarena.com": {
+    "admin@sqlarena.com": {
       "id": "user_001",
-      "name": "Carlos Silva",
-      "email": "instrutor@sqlarena.com",
+      "name": "Admin",
+      "email": "admin@sqlarena.com",
       "role": "INSTRUCTOR",
       "score": 350,
       "solvedCount": 8,

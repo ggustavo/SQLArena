@@ -72,7 +72,16 @@ export default function Navbar({
               </button>
             )}
 
-            <button type="button" onClick={onOpenRanking} className="hidden sm:flex items-center gap-2 px-3 py-2 text-sm font-semibold text-slate-700 dark:text-slate-200" title="Ranking geral"><Trophy size={18} /> Ranking</button>
+            {/* Ranking Header Button */}
+            <button
+              type="button"
+              onClick={onOpenRanking}
+              title="Ranking Geral de Pontuação"
+              className="hidden sm:flex items-center gap-2 px-3.5 py-2 rounded-2xl bg-slate-100 dark:bg-[#252a35] hover:bg-slate-200 dark:hover:bg-[#2e3442] border border-slate-200 dark:border-[#323946] text-slate-700 dark:text-slate-200 text-xs sm:text-sm font-semibold transition cursor-pointer"
+            >
+              <Trophy className="w-4 h-4 text-amber-500" />
+              <span>Ranking</span>
+            </button>
 
             {/* BOTÃO DIRETO DE HISTÓRICO DE SUBMISSÕES */}
             <button
@@ -169,9 +178,41 @@ export default function Navbar({
                         <span>Painel do Instrutor</span>
                       </button>
                     )}
-                    {isInstructor && <button type="button" onClick={() => { onOpenUsers(); setDropdownOpen(false); }} className="w-full flex items-center gap-3 px-3.5 py-2.5 text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-[#282d37] font-medium text-left"><UsersRound size={18} /> Gestão de usuários</button>}
-                    <button type="button" onClick={() => { onOpenRanking(); setDropdownOpen(false); }} className="w-full flex items-center gap-3 px-3.5 py-2.5 text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-[#282d37] font-medium text-left"><Trophy size={18} /> Ranking</button>
-                    <button type="button" onClick={() => { onOpenProfile(); setDropdownOpen(false); }} className="w-full flex items-center gap-3 px-3.5 py-2.5 text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-[#282d37] font-medium text-left"><UserRound size={18} /> Editar perfil</button>
+                    {isInstructor && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          onOpenUsers();
+                          setDropdownOpen(false);
+                        }}
+                        className="w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-[#282d37] font-medium transition text-left cursor-pointer"
+                      >
+                        <UsersRound className="w-4 h-4 text-slate-500 dark:text-slate-400" />
+                        <span>Gestão de Usuários</span>
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        onOpenRanking();
+                        setDropdownOpen(false);
+                      }}
+                      className="w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-[#282d37] font-medium transition text-left cursor-pointer"
+                    >
+                      <Trophy className="w-4 h-4 text-amber-500" />
+                      <span>Ranking Geral</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        onOpenProfile();
+                        setDropdownOpen(false);
+                      }}
+                      className="w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-[#282d37] font-medium transition text-left cursor-pointer"
+                    >
+                      <UserRound className="w-4 h-4 text-slate-500 dark:text-slate-400" />
+                      <span>Editar Perfil</span>
+                    </button>
                   </div>
 
                   {/* Botão de Tema Escuro / Claro */}

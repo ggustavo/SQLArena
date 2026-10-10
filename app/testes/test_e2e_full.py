@@ -24,12 +24,12 @@ def test_full_student_frontend_flow():
     DynamoDBManager().ensure_tables_exist()
     # 1. Login
     login_resp = client.post("/api/auth/login", json={
-        "email": "aluno@sqlarena.com",
+        "email": "gustavo@sqlarena.com",
         "password": "123" # ou 123456
     })
     if login_resp.status_code != 200:
         login_resp = client.post("/api/auth/login", json={
-            "email": "aluno@sqlarena.com",
+            "email": "gustavo@sqlarena.com",
             "password": "123456"
         })
     assert login_resp.status_code == 200
@@ -127,7 +127,7 @@ def test_full_instructor_frontend_flow():
     5. Exclui a questão -> DELETE /api/questions/{id}
     """
     login_resp = client.post("/api/auth/login", json={
-        "email": "instrutor@sqlarena.com",
+        "email": "admin@sqlarena.com",
         "password": "123456"
     })
     assert login_resp.status_code == 200

@@ -116,8 +116,8 @@ def seed_database():
         users_to_seed = [
             {
                 "id": "user_101",
-                "name": "Gustavo Santos",
-                "email": "aluno@sqlarena.com",
+                "name": "Gustavo Moraes",
+                "email": "gustavo@sqlarena.com",
                 "password": "123456",
                 "role": "STUDENT",
                 "score": 0,
@@ -126,8 +126,8 @@ def seed_database():
             },
             {
                 "id": "user_001",
-                "name": "Carlos Silva",
-                "email": "instrutor@sqlarena.com",
+                "name": "Admin",
+                "email": "admin@sqlarena.com",
                 "password": "123456",
                 "role": "INSTRUCTOR",
                 "score": 0,
@@ -135,8 +135,12 @@ def seed_database():
                 "solved_count": 0
             }
         ]
+        # Limpa possíveis usuários obsoletos com emails antigos
+        db.query(User).filter(User.email.in_(["instrutor@sqlarena.com", "aluno@sqlarena.com"])).delete(synchronize_session=False)
+        db.commit()
+
         for u_data in users_to_seed:
-            user = db.query(User).filter(User.email == u_data["email"]).first()
+            user = db.query(User).filter((User.id == u_data["id"]) | (User.email == u_data["email"])).first()
             if not user:
                 user = User(
                     id=u_data["id"],
@@ -150,6 +154,11 @@ def seed_database():
                 )
                 db.add(user)
             else:
+                user.id = u_data["id"]
+                user.name = u_data["name"]
+                user.email = u_data["email"]
+                user.password_hash = get_password_hash(u_data["password"])
+                user.role = u_data["role"]
                 user.score = 0
                 user.streak_days = 0
                 user.solved_count = 0

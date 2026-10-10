@@ -300,11 +300,11 @@ Para auditar e testar manualmente cada requisito de ponta a ponta:
 4. **Inicialização do Frontend:**
    * Terminal 3: `cd frontend; npm run dev`
 5. **Cenários de Teste na Interface (`http://localhost:5173`):**
-   * **Cenário A - Autenticação:** Fazer login com `aluno@sqlarena.com` / `123456`.
+   * **Cenário A - Autenticação:** Fazer login com `gustavo@sqlarena.com` / `123456`.
    * **Cenário B - Mural & Filtros:** Testar filtro de categorias e status no Dashboard.
    * **Cenário C - Resolução Correta (Arena):** Entrar em uma questão, executar a query correta com `Ctrl + Enter`. Verificar no terminal do Worker o processamento da mensagem da SQS, comparação de hash SHA-256 no Redis, atualização do status para `ACCEPTED` no frontend e ganho de +10 XP no perfil.
    * **Cenário D - Rate Limit (5s):** Submeter duas vezes em menos de 5 segundos e verificar o bloqueio amigável com contagem regressiva.
    * **Cenário E - Erro de Sintaxe:** Digitar uma query inválida e verificar a exibição do erro nativo retornado pelo PostgreSQL.
    * **Cenário F - Tentativa Incorreta (`WRONG_ANSWER`):** Executar um `SELECT` com dados divergentes e verificar a resposta sem pontuação extra.
    * **Cenário G - Histórico:** Abrir o modal de histórico na Navbar e clicar em "Carregar no Editor" em uma tentativa passada.
-   * **Cenário H - Painel do Instrutor:** Logar como `instrutor@sqlarena.com` / `123456`, acessar a página de criação de questões e testar a obrigatoriedade da cláusula `ORDER BY` no gabarito.
+   * **Cenário H - Painel do Instrutor:** Logar como `admin@sqlarena.com` / `123456`, acessar a página de criação de questões e testar a obrigatoriedade da cláusula `ORDER BY` no gabarito.

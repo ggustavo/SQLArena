@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Database, Lock, Mail, ArrowRight, ShieldCheck, GraduationCap, UserRound } from 'lucide-react';
+import { Database, Lock, Mail, ArrowRight, UserRound } from 'lucide-react';
 import { login, register } from '../services/authService';
 
 export default function LoginPage({ onLoginSuccess }) {
@@ -35,10 +35,7 @@ export default function LoginPage({ onLoginSuccess }) {
     }
   };
 
-  const fillAccount = (selectedEmail) => {
-    setEmail(selectedEmail);
-    setPassword('123456');
-  };
+
 
   return (
     <div className="min-h-screen w-full flex items-center justify-center p-6 bg-slate-100 dark:bg-slate-950 text-slate-900 dark:text-slate-100">
@@ -129,42 +126,7 @@ export default function LoginPage({ onLoginSuccess }) {
             </button>
           </form>
 
-          {/* Quick Credential Pre-fill Helpers */}
-          {!registerMode && <div className="pt-4 border-t border-slate-200 dark:border-slate-800 space-y-3">
-            <div className="text-xs font-semibold text-slate-500 uppercase tracking-wider text-center">
-              Preencher dados para teste:
-            </div>
 
-            <div className="grid grid-cols-2 gap-3">
-              <button
-                type="button"
-                onClick={() => fillAccount('aluno@sqlarena.com')}
-                className="p-3 rounded-xl border border-slate-200 dark:border-slate-800 hover:border-indigo-500 bg-slate-50 dark:bg-slate-950 text-left transition"
-              >
-                <div className="flex items-center gap-2 text-indigo-600 dark:text-indigo-400 font-semibold text-xs mb-1">
-                  <GraduationCap className="w-4 h-4" />
-                  <span>Aluno</span>
-                </div>
-                <div className="text-xs font-medium text-slate-800 dark:text-slate-200 truncate">
-                  aluno@sqlarena.com
-                </div>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => fillAccount('instrutor@sqlarena.com')}
-                className="p-3 rounded-xl border border-slate-200 dark:border-slate-800 hover:border-purple-500 bg-slate-50 dark:bg-slate-950 text-left transition"
-              >
-                <div className="flex items-center gap-2 text-purple-600 dark:text-purple-400 font-semibold text-xs mb-1">
-                  <ShieldCheck className="w-4 h-4" />
-                  <span>Instrutor / Criador</span>
-                </div>
-                <div className="text-xs font-medium text-slate-800 dark:text-slate-200 truncate">
-                  instrutor@sqlarena.com
-                </div>
-              </button>
-            </div>
-          </div>}
         </div>
 
         <div className="text-center text-sm text-slate-500">

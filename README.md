@@ -255,8 +255,8 @@ npm run dev
 
 | Perfil | Email | Senha | Acesso |
 | :--- | :--- | :--- | :--- |
-| **Aluno** | `aluno@sqlarena.com` | `123456` | Dashboard, Arena Monaco (editor com restauração da última tentativa), Histórico em Modal, Pontuação |
-| **Instrutor** | `instrutor@sqlarena.com` | `123456` | Painel de Questões, Validação Dinâmica Sandbox, Categorias N:N, Auditoria de Ações |
+| **Aluno** | `gustavo@sqlarena.com` | `123456` | Dashboard, Arena Monaco (editor com restauração da última tentativa), Histórico em Modal, Pontuação |
+| **Instrutor** | `admin@sqlarena.com` | `123456` | Painel de Questões, Validação Dinâmica Sandbox, Categorias N:N, Auditoria de Ações, Gestão de Usuários |
 
 ---
 
