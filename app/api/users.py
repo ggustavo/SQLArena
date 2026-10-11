@@ -172,6 +172,7 @@ async def upload_avatar(
     user.avatar_url = avatar_url
     db.commit()
     db.refresh(user)
+    redis_client.invalidate_ranking()
 
     audit_user("USER_AVATAR_UPLOAD", user.id, user, {
         "s3_key": s3_key,
@@ -183,7 +184,10 @@ async def upload_avatar(
 
 
 @router.get("/{user_id}/avatar")
-def get_user_avatar(user_id: str):
+def get_user_avatar(
+    user_id: str,
+    t: str | None = Query(default=None),
+):
     """
     Recupera o arquivo binário do avatar do usuário armazenado no Amazon S3.
     """
@@ -196,7 +200,10 @@ def get_user_avatar(user_id: str):
         return Response(
             content=avatar_bytes,
             media_type="image/png",
-            headers={"Cache-Control": "public, max-age=86400"},
+            headers={
+                "Cache-Control": "public, max-age=300, must-revalidate",
+                "Access-Control-Allow-Origin": "*",
+            },
         )
     except HTTPException:
         raise
@@ -223,6 +230,7 @@ def delete_my_avatar(
     user.avatar_url = None
     db.commit()
     db.refresh(user)
+    redis_client.invalidate_ranking()
     audit_user("USER_AVATAR_DELETE", user.id, user, {"s3_key": s3_key})
     return user_response(user)
 

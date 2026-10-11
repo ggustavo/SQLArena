@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Medal, Trophy, Crown, Sparkles, Award } from 'lucide-react';
 import { getRanking } from '../services/rankingService';
+import UserAvatar from '../components/UserAvatar';
 
 export default function RankingPage({ currentUser }) {
   const [ranking, setRanking] = useState([]);
@@ -106,6 +107,15 @@ export default function RankingPage({ currentUser }) {
                         {podium.icon}
                       </div>
 
+                      <div className="flex justify-center">
+                        <UserAvatar
+                          user={user}
+                          className="w-12 h-12 rounded-2xl border-2 border-white/60 dark:border-slate-700/60 shadow-sm"
+                          textClassName="text-base font-bold"
+                          fallbackBg="bg-slate-700 text-white"
+                        />
+                      </div>
+
                       <div>
                         <span className={`inline-block px-2.5 py-0.5 rounded-full text-[11px] font-bold shadow-xs ${podium.badgeBg}`}>
                           {podium.label}
@@ -197,13 +207,12 @@ export default function RankingPage({ currentUser }) {
                         </td>
                         <td className="py-4 px-6">
                           <div className="flex items-center gap-3">
-                            <div className="w-8 h-8 rounded-full overflow-hidden bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-200 font-bold text-xs flex items-center justify-center shrink-0 border border-slate-300 dark:border-slate-600">
-                              {user.avatarUrl ? (
-                                <img src={user.avatarUrl} alt={user.name} className="w-full h-full object-cover" />
-                              ) : (
-                                <span>{user.name?.charAt(0).toUpperCase() || 'U'}</span>
-                              )}
-                            </div>
+                            <UserAvatar
+                              user={user}
+                              className="w-8 h-8 rounded-full border border-slate-300 dark:border-slate-600"
+                              textClassName="text-xs font-bold"
+                              fallbackBg="bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-200"
+                            />
                             <div>
                               <div className="font-bold text-slate-900 dark:text-white flex items-center gap-2">
                                 <span>{user.name}</span>
