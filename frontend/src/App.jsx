@@ -135,7 +135,12 @@ export default function App() {
           <UserManagementPage currentUser={user} onBack={() => setCurrentView('instructor')} />
         )}
         {currentView === 'profile' && (
-          <ProfilePage user={user} onBack={() => setCurrentView('dashboard')} onUpdated={setUser} />
+          <ProfilePage
+            user={user}
+            onBack={() => setCurrentView('dashboard')}
+            onUpdated={setUser}
+            onAccountDeleted={handleLogout}
+          />
         )}
         {currentView === 'ranking' && <RankingPage currentUser={user} />}
       </main>

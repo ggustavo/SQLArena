@@ -50,6 +50,29 @@ export async function updateProfile(changes) {
   return response.data;
 }
 
+export async function uploadAvatar(file) {
+  const formData = new FormData();
+  formData.append('file', file);
+  const response = await api.post('/users/me/avatar', formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+  });
+  localStorage.setItem(STORAGE_KEY_USER, JSON.stringify(response.data));
+  return response.data;
+}
+
+export async function deleteAvatar() {
+  const response = await api.delete('/users/me/avatar');
+  localStorage.setItem(STORAGE_KEY_USER, JSON.stringify(response.data));
+  return response.data;
+}
+
+export async function deleteMyAccount() {
+  await api.delete('/users/me');
+  localStorage.removeItem(STORAGE_KEY_USER);
+  localStorage.removeItem(STORAGE_KEY_TOKEN);
+  return true;
+}
+
 /**
  * Retorna o usuário logado atualmente (da memória / localStorage).
  */

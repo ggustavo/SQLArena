@@ -197,8 +197,12 @@ export default function RankingPage({ currentUser }) {
                         </td>
                         <td className="py-4 px-6">
                           <div className="flex items-center gap-3">
-                            <div className="w-8 h-8 rounded-full bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-200 font-bold text-xs flex items-center justify-center shrink-0">
-                              {user.name?.charAt(0).toUpperCase() || 'U'}
+                            <div className="w-8 h-8 rounded-full overflow-hidden bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-200 font-bold text-xs flex items-center justify-center shrink-0 border border-slate-300 dark:border-slate-600">
+                              {user.avatarUrl ? (
+                                <img src={user.avatarUrl} alt={user.name} className="w-full h-full object-cover" />
+                              ) : (
+                                <span>{user.name?.charAt(0).toUpperCase() || 'U'}</span>
+                              )}
                             </div>
                             <div>
                               <div className="font-bold text-slate-900 dark:text-white flex items-center gap-2">
@@ -210,7 +214,7 @@ export default function RankingPage({ currentUser }) {
                                 )}
                               </div>
                               <div className="text-xs text-slate-500 dark:text-slate-400">
-                                {user.email}
+                                {user.university ? `${user.university}` : user.email || ''}
                               </div>
                             </div>
                           </div>

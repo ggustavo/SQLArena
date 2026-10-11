@@ -9,6 +9,7 @@ import logging
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy import text
 from app.config import settings
 from app.database.session import engine, Base
 from app.s3.s3_manager import S3Manager
@@ -34,6 +35,22 @@ async def lifespan(app: FastAPI):
     # 1. Verifica/cria tabelas do RDS PostgreSQL
     try:
         Base.metadata.create_all(bind=engine)
+        try:
+            with engine.connect() as conn:
+                for col, col_type in [
+                    ("avatar_url", "VARCHAR(255)"),
+                    ("university", "VARCHAR(120)"),
+                    ("city", "VARCHAR(80)"),
+                    ("state", "VARCHAR(80)"),
+                    ("country", "VARCHAR(80)"),
+                ]:
+                    try:
+                        conn.execute(text(f"ALTER TABLE users ADD COLUMN IF NOT EXISTS {col} {col_type}"))
+                        conn.commit()
+                    except Exception:
+                        pass
+        except Exception as mig_err:
+            logger.debug("Migração opcional de colunas ignorada: %s", mig_err)
         logger.info("[✓] Banco RDS PostgreSQL conectado com sucesso.")
     except Exception as e:
         logger.error(f"[!] Erro ao conectar no RDS PostgreSQL: {e}")

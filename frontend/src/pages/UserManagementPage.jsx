@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
-import { ArrowLeft, Search, ShieldCheck, UserRound, UsersRound, AlertCircle, CheckCircle2 } from 'lucide-react';
-import { getUsers, setUserRole } from '../services/userService';
+import { ArrowLeft, Search, ShieldCheck, UserRound, UsersRound, AlertCircle, CheckCircle2, Trash2 } from 'lucide-react';
+import { getUsers, setUserRole, deleteUser } from '../services/userService';
 
 export default function UserManagementPage({ currentUser, onBack }) {
   const [search, setSearch] = useState('');
@@ -47,6 +47,25 @@ export default function UserManagementPage({ currentUser, onBack }) {
       );
     } catch (err) {
       setError(err.response?.data?.detail || 'Não foi possível alterar a permissão.');
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  async function handleDelete(user) {
+    const confirmed = window.confirm(
+      `Tem certeza de que deseja excluir o usuário "${user.name}"? Todos os dados vinculados e arquivos no Amazon S3 serão removidos.`
+    );
+    if (!confirmed) return;
+    setBusyId(user.id);
+    setError('');
+    setSuccessMsg('');
+    try {
+      await deleteUser(user.id);
+      setUsers((items) => items.filter((item) => item.id !== user.id));
+      setSuccessMsg(`Usuário "${user.name}" excluído com sucesso.`);
+    } catch (err) {
+      setError(err.response?.data?.detail || 'Não foi possível excluir o usuário.');
     } finally {
       setBusyId(null);
     }
@@ -159,8 +178,12 @@ export default function UserManagementPage({ currentUser, onBack }) {
                     >
                       <td className="py-4 px-6">
                         <div className="flex items-center gap-3">
-                          <div className="w-9 h-9 rounded-2xl bg-indigo-100 dark:bg-indigo-950/80 text-indigo-700 dark:text-indigo-300 font-bold text-xs flex items-center justify-center shrink-0 border border-indigo-200/60 dark:border-indigo-800/60">
-                            {user.name?.charAt(0).toUpperCase() || 'U'}
+                          <div className="w-10 h-10 rounded-2xl overflow-hidden bg-indigo-100 dark:bg-indigo-950/80 text-indigo-700 dark:text-indigo-300 font-bold text-xs flex items-center justify-center shrink-0 border border-indigo-200/60 dark:border-indigo-800/60">
+                            {user.avatarUrl ? (
+                              <img src={user.avatarUrl} alt={user.name} className="w-full h-full object-cover" />
+                            ) : (
+                              <span>{user.name?.charAt(0).toUpperCase() || 'U'}</span>
+                            )}
                           </div>
                           <div>
                             <div className="font-bold text-slate-900 dark:text-white flex items-center gap-2">
@@ -172,7 +195,7 @@ export default function UserManagementPage({ currentUser, onBack }) {
                               )}
                             </div>
                             <div className="text-xs text-slate-500 dark:text-slate-400">
-                              ID: #{user.id}
+                              {user.university ? `${user.university} • ` : ''}ID: #{user.id}
                             </div>
                           </div>
                         </div>
@@ -208,27 +231,39 @@ export default function UserManagementPage({ currentUser, onBack }) {
                         {isCurrent ? (
                           <span
                             className="text-xs font-semibold text-slate-400 cursor-not-allowed"
-                            title="Você não pode alterar seu próprio perfil"
+                            title="Você não pode alterar seu próprio perfil através deste painel"
                           >
                             Não editável
                           </span>
                         ) : (
-                          <button
-                            type="button"
-                            disabled={busyId === user.id}
-                            onClick={() => changeRole(user)}
-                            className={`inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl text-xs font-bold transition cursor-pointer disabled:opacity-50 ${
-                              isInstructor
-                                ? 'bg-rose-50 hover:bg-rose-100 dark:bg-rose-950/60 dark:hover:bg-rose-900/60 text-rose-700 dark:text-rose-300 border border-rose-200 dark:border-rose-900/60'
-                                : 'bg-indigo-50 hover:bg-indigo-100 dark:bg-indigo-950/60 dark:hover:bg-indigo-900/60 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800/80'
-                            }`}
-                          >
-                            {busyId === user.id
-                              ? 'Salvando...'
-                              : isInstructor
-                              ? 'Tornar Aluno'
-                              : 'Promover a Instrutor'}
-                          </button>
+                          <div className="flex items-center justify-end gap-2">
+                            <button
+                              type="button"
+                              disabled={busyId === user.id}
+                              onClick={() => changeRole(user)}
+                              className={`inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl text-xs font-bold transition cursor-pointer disabled:opacity-50 ${
+                                isInstructor
+                                  ? 'bg-rose-50 hover:bg-rose-100 dark:bg-rose-950/60 dark:hover:bg-rose-900/60 text-rose-700 dark:text-rose-300 border border-rose-200 dark:border-rose-900/60'
+                                  : 'bg-indigo-50 hover:bg-indigo-100 dark:bg-indigo-950/60 dark:hover:bg-indigo-900/60 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800/80'
+                              }`}
+                            >
+                              {busyId === user.id
+                                ? 'Salvando...'
+                                : isInstructor
+                                ? 'Tornar Aluno'
+                                : 'Promover a Instrutor'}
+                            </button>
+
+                            <button
+                              type="button"
+                              disabled={busyId === user.id}
+                              onClick={() => handleDelete(user)}
+                              title="Excluir usuário do sistema"
+                              className="p-1.5 rounded-xl bg-slate-100 hover:bg-rose-100 dark:bg-[#252a35] dark:hover:bg-rose-950/60 text-slate-500 hover:text-rose-600 dark:text-slate-400 dark:hover:text-rose-400 transition cursor-pointer disabled:opacity-50"
+                            >
+                              <Trash2 size={14} />
+                            </button>
+                          </div>
                         )}
                       </td>
                     </tr>

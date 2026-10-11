@@ -49,6 +49,11 @@ class UserResponse(BaseModel):
     score: int
     solvedCount: int
     streakDays: int
+    avatarUrl: str | None = None
+    university: str | None = None
+    city: str | None = None
+    state: str | None = None
+    country: str | None = None
 
 class LoginResponse(BaseModel):
     user: UserResponse
@@ -56,9 +61,18 @@ class LoginResponse(BaseModel):
 
 def user_response(user: User) -> UserResponse:
     return UserResponse(
-        id=user.id, name=user.name, email=user.email, role=user.role,
-        score=user.score or 0, solvedCount=user.solved_count or 0,
+        id=user.id,
+        name=user.name,
+        email=user.email,
+        role=user.role,
+        score=user.score or 0,
+        solvedCount=user.solved_count or 0,
         streakDays=user.streak_days or 0,
+        avatarUrl=getattr(user, "avatar_url", None),
+        university=getattr(user, "university", None),
+        city=getattr(user, "city", None),
+        state=getattr(user, "state", None),
+        country=getattr(user, "country", None),
     )
 
 def login_response(user: User) -> LoginResponse:

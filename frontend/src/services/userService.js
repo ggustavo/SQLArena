@@ -9,3 +9,8 @@ export async function setUserRole(id, role) {
   const response = await api.patch(`/users/${encodeURIComponent(id)}/role`, { role });
   return response.data;
 }
+
+export async function deleteUser(id) {
+  const response = await api.delete(`/users/${encodeURIComponent(id)}`);
+  return response.data;
+}

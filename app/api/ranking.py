@@ -16,6 +16,8 @@ class RankingEntry(BaseModel):
     name: str
     score: int
     solvedCount: int
+    avatarUrl: str | None = None
+    university: str | None = None
 
 
 @router.get("", response_model=list[RankingEntry])
@@ -31,8 +33,15 @@ def get_ranking(db: Session = Depends(get_db)):
         .all()
     )
     result = [
-        {"position": position, "id": user.id, "name": user.name,
-         "score": user.score or 0, "solvedCount": user.solved_count or 0}
+        {
+            "position": position,
+            "id": user.id,
+            "name": user.name,
+            "score": user.score or 0,
+            "solvedCount": user.solved_count or 0,
+            "avatarUrl": getattr(user, "avatar_url", None),
+            "university": getattr(user, "university", None),
+        }
         for position, user in enumerate(users, start=1)
     ]
     redis_client.set_ranking(result)

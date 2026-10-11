@@ -277,7 +277,8 @@ A constante `USE_MOCK` em `src/services/api.js` está definida como `false` por 
 | **REQ-08** | Sistema de pontuação: +10 XP para acertos inéditos consolidados no banco RDS | **Atendido (100%)** | `app/worker/executor.py`, `app/database/models.py` (coluna `score` em `users`) |
 | **REQ-09** | Log imutável de submissões e ações administrativas no Amazon DynamoDB | **Atendido (100%)** | `app/dynamodb/dynamo_manager.py`, `app/worker/main.py`, `app/api/questions.py` |
 | **REQ-10** | Frontend SPA 100% responsivo, Monaco Editor com atalho `Ctrl+Enter`, histórico dinâmico sem perda de contexto | **Atendido (100%)** | `frontend/src/` (React 19 + Vite 6 + Tailwind CSS v4 + Monaco Editor) |
-| **REQ-11** | Infraestrutura como Código (Terraform) cobrindo VPC, Duplo ASG, ALB, RDS, ElastiCache, S3, SQS e DynamoDB | **Atendido (100%)** | `terraform/*.tf`, `terraform/worker_asg.tf`, `terraform/alb.tf`, `terraform/asg.tf` |
+| **REQ-11** | Infraestrutura como Código (Terraform) cobrindo VPC, Duplo ASG, ALB, RDS, ElastiCache, S3, SQS e DynamoDB | **Atendido (100%)** | `terraform/*.tf`, `terraform/worker_asg.tf`, `terraform/alb.tf`, `terraform/asg_web.tf` |
+| **REQ-12** | CRUD completo de Usuários (CREATE, READ, UPDATE, DELETE) auditado no DynamoDB e manipulação de arquivo binário (Avatar com rescaling 256x256 no Pillow e armazenamento no S3) com perfil expandido | **Atendido (100%)** | `app/api/users.py`, `app/api/auth.py`, `app/database/models.py`, `frontend/src/pages/ProfilePage.jsx` |
 
 ---
 

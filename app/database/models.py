@@ -25,6 +25,11 @@ class User(Base):
     score = Column(Integer, default=0)
     solved_count = Column(Integer, default=0)
     streak_days = Column(Integer, default=0)
+    avatar_url = Column(String(255), nullable=True)
+    university = Column(String(120), nullable=True)
+    city = Column(String(80), nullable=True)
+    state = Column(String(80), nullable=True)
+    country = Column(String(80), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     solved_questions = relationship("UserSolvedQuestion", back_populates="user", cascade="all, delete-orphan")
