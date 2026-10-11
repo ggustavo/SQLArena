@@ -262,6 +262,13 @@ def get_submission_status(
     try:
         doc = dynamo_manager.get_submission(submission_id)
         if doc:
+            cpu_val = doc.get("cpu_percent") if doc.get("cpu_percent") is not None else doc.get("cpuPercent")
+            if cpu_val is not None:
+                try:
+                    doc["cpuPercent"] = float(cpu_val)
+                except (ValueError, TypeError):
+                    pass
+            doc["submissionId"] = doc.get("submission_id") or doc.get("submissionId")
             return doc
     except Exception:
         pass
@@ -300,6 +307,13 @@ def _format_submission_item(s: Dict[str, Any], db: Session) -> Dict[str, Any]:
     if exec_time is not None:
         exec_time = float(exec_time)
 
+    cpu_val = s.get("cpu_percent") if s.get("cpu_percent") is not None else s.get("cpuPercent")
+    if cpu_val is not None:
+        try:
+            cpu_val = float(cpu_val)
+        except (ValueError, TypeError):
+            cpu_val = None
+
     return {
         "submissionId": sub_id,
         "submission_id": sub_id,
@@ -318,6 +332,7 @@ def _format_submission_item(s: Dict[str, Any], db: Session) -> Dict[str, Any]:
         "pointsAwarded": 10 if outcome == "SUCCESS" else 0,
         "columns": s.get("columns", []),
         "rows": s.get("rows", []),
+        "cpuPercent": cpu_val,
     }
 
 @router.get("/history")
