@@ -9,6 +9,16 @@ export default function SqlEditor({ code, setCode, onRun, isRunning }) {
     editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter, () => {
       onRun();
     });
+
+    // Recalcula medição de largura monospaçada após a fonte JetBrains Mono ser carregada
+    if (typeof document !== 'undefined' && document.fonts) {
+      document.fonts.ready.then(() => {
+        monaco.editor.remeasureFonts();
+      });
+    }
+    setTimeout(() => {
+      monaco.editor.remeasureFonts();
+    }, 100);
   };
 
   return (
@@ -82,9 +92,10 @@ export default function SqlEditor({ code, setCode, onRun, isRunning }) {
           onMount={handleEditorDidMount}
           options={{
             minimap: { enabled: false },
-            fontSize: 16,
-            lineHeight: 25,
-            fontFamily: "'JetBrains Mono', monospace",
+            fontSize: 15,
+            lineHeight: 24,
+            fontFamily: "'JetBrains Mono', Consolas, 'Courier New', monospace",
+            letterSpacing: 0,
             lineNumbers: 'on',
             scrollBeyondLastLine: false,
             automaticLayout: true,

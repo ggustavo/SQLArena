@@ -19,3 +19,9 @@
     font-family: 'JetBrains Mono', monospace;
   }
 }
+
+/* Previne desvio/desalinhamento do cursor no Monaco Editor */
+.monaco-editor,
+.monaco-editor * {
+  letter-spacing: 0 !important;
+}
