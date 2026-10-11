@@ -124,3 +124,40 @@ def test_dynamodb_audit_endpoints():
     crud_logs = crud_logs_res.json()
     assert isinstance(crud_logs, list)
 
+
+def test_live_queue_endpoint():
+    # Login como aluno ou admin
+    login_res = client.post("/api/auth/login", json={
+        "email": "gustavo@sqlarena.com",
+        "password": "123456"
+    })
+    assert login_res.status_code == 200
+    token = login_res.json()["token"]
+    headers = {"Authorization": f"Bearer {token}"}
+
+    # Consulta endpoint de fila ao vivo
+    res = client.get("/api/submissions/live-queue", headers=headers)
+    assert res.status_code == 200
+    data = res.json()
+
+    # Valida estrutura de métricas SQS
+    assert "queueStats" in data
+    stats = data["queueStats"]
+    assert "approximateMessages" in stats
+    assert "inFlightMessages" in stats
+    assert "status" in stats
+
+    # Valida lista de itens em tempo real
+    assert "liveItems" in data
+    items = data["liveItems"]
+    assert isinstance(items, list)
+    assert len(items) > 0
+
+    # Valida que nenhum item expõe a resposta/query do aluno (Requisito estrito de privacidade)
+    for it in items:
+        assert "studentName" in it
+        assert "questionTitle" in it
+        assert "status" in it
+        assert "query" not in it, "A query SQL do aluno NUNCA pode ser exposta no painel ao vivo!"
+        assert "sql_query" not in it, "A query SQL do aluno NUNCA pode ser exposta no painel ao vivo!"
+

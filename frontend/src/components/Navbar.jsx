@@ -28,6 +28,7 @@ export default function Navbar({
   onOpenUsers,
   onOpenRanking,
   onOpenDynamoLogs,
+  onOpenLiveQueue,
   theme,
   onToggleTheme,
 }) {
@@ -96,6 +97,21 @@ export default function Navbar({
             >
               <History className="w-4 h-4 text-slate-600 dark:text-slate-300" />
               <span className="hidden sm:inline">Histórico de Submissões</span>
+            </button>
+
+            {/* 4. Fila ao Vivo (compartilhado entre Aluno e Admin com live beacon) */}
+            <button
+              type="button"
+              onClick={onOpenLiveQueue}
+              title="Fila de Submissões ao Vivo (Pipeline SQS & EC2 Workers)"
+              className="relative flex items-center gap-2 px-3.5 py-2 rounded-2xl bg-indigo-50 dark:bg-indigo-950/40 hover:bg-indigo-100 dark:hover:bg-indigo-900/60 border border-indigo-200 dark:border-indigo-800/80 text-indigo-700 dark:text-indigo-300 text-xs sm:text-sm font-semibold transition cursor-pointer shadow-xs"
+            >
+              <span className="relative flex h-2 w-2">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+              </span>
+              <Layers className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />
+              <span className="hidden sm:inline">Fila ao Vivo</span>
             </button>
 
             {/* User Profile Dropdown */}

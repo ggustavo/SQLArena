@@ -314,3 +314,50 @@ export async function fetchLastSubmittedSql(questionId) {
   }
 }
 
+/**
+ * Retorna as estatísticas em tempo real da fila Amazon SQS e os itens ativos no pipeline.
+ * O código SQL é estritamente omitido pela API por questões de privacidade e anti-cola.
+ */
+export async function getLiveQueue() {
+  if (USE_MOCK) {
+    return {
+      queueStats: {
+        approximateMessages: 1,
+        inFlightMessages: 1,
+        delayedMessages: 0,
+        totalPipeline: 2,
+        status: 'OPERATIONAL',
+        updatedAt: new Date().toISOString(),
+      },
+      liveItems: [
+        {
+          submissionId: 'mock_sub_1',
+          studentName: 'Gustavo Moraes',
+          studentUniversity: 'Universidade de São Paulo (USP)',
+          questionTitle: 'Top 5 Clientes por Faturamento',
+          difficulty: 'Médio',
+          status: 'PROCESSING',
+          outcome: 'PROCESSING',
+          createdAt: new Date().toISOString(),
+          queryProtected: true,
+        },
+        {
+          submissionId: 'mock_sub_2',
+          studentName: 'Ana Beatriz Rocha',
+          studentUniversity: 'UFSC',
+          questionTitle: 'Produtos Nunca Vendidos',
+          difficulty: 'Fácil',
+          status: 'DONE',
+          outcome: 'SUCCESS',
+          executionTimeMs: 44.2,
+          createdAt: new Date(Date.now() - 12000).toISOString(),
+          queryProtected: true,
+        },
+      ]
+    };
+  }
+
+  const response = await api.get('/submissions/live-queue');
+  return response.data;
+}
+

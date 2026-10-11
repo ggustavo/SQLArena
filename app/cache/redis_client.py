@@ -92,6 +92,58 @@ class RedisClient:
         except Exception:
             return False
 
+    def push_live_submission(self, submission_id: str) -> bool:
+        """Adiciona o ID da submissão na lista de submissões em tempo real (mantém últimas 30)."""
+        key = "submissions:live_stream"
+        try:
+            self.client.lpush(key, submission_id)
+            self.client.ltrim(key, 0, 29)
+            return True
+        except Exception as e:
+            logger.warning(f"Erro ao adicionar submissão na stream Redis: {e}")
+            return False
+
+    def get_live_submission_ids(self) -> List[str]:
+        """Retorna os IDs das submissões mais recentes em tempo real."""
+        key = "submissions:live_stream"
+        try:
+            items = self.client.lrange(key, 0, 29)
+            if not items:
+                return []
+            return [it.decode("utf-8") if isinstance(it, bytes) else str(it) for it in items]
+        except Exception as e:
+            logger.warning(f"Erro ao recuperar stream de submissões Redis: {e}")
+            return []
+
+    def get_cached_user_brief(self, user_id: str) -> Optional[Dict[str, Any]]:
+        """Recupera dados resumidos do perfil do usuário em cache no Redis (evita bater no RDS a cada 1s)."""
+        key = f"user:{user_id}:brief"
+        try:
+            val = self.client.get(key)
+            return json.loads(val) if val else None
+        except Exception as e:
+            logger.warning(f"Erro ao ler cache de perfil breve do usuário {user_id}: {e}")
+            return None
+
+    def set_cached_user_brief(self, user_id: str, data: Dict[str, Any], ttl: int = 600) -> bool:
+        """Salva dados resumidos do perfil do usuário em cache no Redis (TTL padrão 10 minutos)."""
+        key = f"user:{user_id}:brief"
+        try:
+            self.client.set(key, json.dumps(data), ex=ttl)
+            return True
+        except Exception as e:
+            logger.warning(f"Erro ao salvar cache de perfil breve do usuário {user_id}: {e}")
+            return False
+
+    def delete_user_brief(self, user_id: str) -> bool:
+        """Invalida o cache de perfil breve do usuário."""
+        key = f"user:{user_id}:brief"
+        try:
+            self.client.delete(key)
+            return True
+        except Exception:
+            return False
+
     def set_cached_questions(self, role: str, data: List[Dict[str, Any]], ttl: int = 300) -> bool:
         """Armazena a lista de questões no cache Redis (TTL 300s)."""
         key = f"questions:list:{role.lower()}"

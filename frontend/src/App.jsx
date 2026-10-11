@@ -9,6 +9,7 @@ import UserManagementPage from './pages/UserManagementPage';
 import RankingPage from './pages/RankingPage';
 import DynamoLogsPage from './pages/DynamoLogsPage';
 import HistoryModal from './components/HistoryModal';
+import LiveQueueModal from './components/LiveQueueModal';
 import { getCurrentUser, logout } from './services/authService';
 import { getQuestions } from './services/questionService';
 
@@ -21,6 +22,7 @@ export default function App() {
   const [arenaInitialSql, setArenaInitialSql] = useState(null);
   const [questions, setQuestions] = useState([]);
   const [isHistoryModalOpen, setIsHistoryModalOpen] = useState(false);
+  const [isLiveQueueOpen, setIsLiveQueueOpen] = useState(false);
 
   // Aplica classe dark ou light no HTML com tons suaves de cinza (não preto absoluto)
   useEffect(() => {
@@ -108,6 +110,7 @@ export default function App() {
         onOpenProfile={() => setCurrentView('profile')}
         onOpenRanking={() => setCurrentView('ranking')}
         onOpenHistory={() => setIsHistoryModalOpen(true)}
+        onOpenLiveQueue={() => setIsLiveQueueOpen(true)}
         onOpenDynamoLogs={() => setCurrentView('dynamo-logs')}
       />
 
@@ -156,6 +159,12 @@ export default function App() {
         onClose={() => setIsHistoryModalOpen(false)}
         onLoadSqlIntoEditor={handleLoadSqlIntoEditor}
         currentQuestionId={currentView === 'arena' ? selectedQuestion?.id : null}
+      />
+
+      {/* Modal de Fila de Submissões ao Vivo: Polling 1s e métricas SQS */}
+      <LiveQueueModal
+        isOpen={isLiveQueueOpen}
+        onClose={() => setIsLiveQueueOpen(false)}
       />
     </div>
   );

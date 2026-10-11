@@ -118,8 +118,9 @@ def submit_query(
         "createdAt": now_iso,
     }
 
-    # 3. Grava no Redis para polling imediato
+    # 3. Grava no Redis para polling imediato e stream ao vivo
     redis_client.set_submission_status(submission_id, sub_data)
+    redis_client.push_live_submission(submission_id)
 
     # 4. Grava no DynamoDB (tabela sqlarena-submissions-log)
     try:
@@ -242,6 +243,192 @@ def process_submission_callback(
         "success": True,
         "submissionId": sub_id,
         "pointsAwarded": points_awarded
+    }
+
+@router.get("/live-queue")
+def get_live_queue(
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Retorna métricas em tempo real da fila Amazon SQS e as últimas 20 submissões no fluxo:
+    - Consulta instantânea dos atributos da fila SQS via get_queue_stats() (ApproximateNumberOfMessages).
+    - Se houver K mensagens aguardando na fila, exibe essas K mensagens com status 'Avaliando' (mais recente no topo).
+    - As 20 - K mensagens restantes vêm dos logs mais recentes do DynamoDB (com status Aprovado, Divergente, Erro, etc.).
+    - Total de exatamente até 20 submissões sem dados simulados fictícios.
+    - PRIVACIDADE: O código SQL enviado pelo aluno NUNCA é transmitido.
+    """
+    # 1. Estatísticas oficiais do Amazon SQS
+    try:
+        stats = sqs_manager.get_queue_stats() or {}
+    except Exception:
+        stats = {}
+
+    approx_messages = int(stats.get("mensagens_disponiveis", 0))
+    in_flight = int(stats.get("mensagens_em_processamento", 0))
+    total_sqs_active = approx_messages + in_flight
+
+    # 2. Busca submissões ativas no Redis (em memória)
+    live_ids = redis_client.get_live_submission_ids()
+    redis_submissions = []
+    for sid in live_ids:
+        data = redis_client.get_submission_status(sid)
+        if data:
+            redis_submissions.append(data)
+
+    # 3. Busca histórico do DynamoDB
+    try:
+        dynamo_submissions = dynamo_manager.list_all_submissions(limit=60)
+    except Exception:
+        dynamo_submissions = []
+
+    # Mescla e desduplica (Redis tem o status mais em tempo real da memória)
+    seen_ids = set()
+    all_raw = []
+    for s in redis_submissions:
+        sid = s.get("submissionId") or s.get("submission_id")
+        if sid and sid not in seen_ids:
+            seen_ids.add(sid)
+            all_raw.append(s)
+
+    for s in dynamo_submissions:
+        sid = s.get("submissionId") or s.get("submission_id")
+        if sid and sid not in seen_ids:
+            seen_ids.add(sid)
+            all_raw.append(s)
+
+    # Ordena por data decrescente (mais recente primeiro)
+    all_raw.sort(key=lambda x: str(x.get("created_at") or x.get("createdAt") or ""), reverse=True)
+
+    # Coleta IDs de usuários e questões para enriquecimento
+    user_ids = {str(s.get("student_id") or s.get("userId") or s.get("user_id")) for s in all_raw if (s.get("student_id") or s.get("userId") or s.get("user_id"))}
+    q_ids = set()
+    for s in all_raw:
+        qid = s.get("question_id") or s.get("questionId")
+        if qid is not None:
+            try:
+                q_ids.add(int(qid))
+            except (ValueError, TypeError):
+                pass
+
+    users_map = {}
+    missing_user_ids = []
+    for uid in user_ids:
+        cached_u = redis_client.get_cached_user_brief(uid)
+        if cached_u:
+            users_map[uid] = cached_u
+        else:
+            missing_user_ids.append(uid)
+
+    if missing_user_ids:
+        try:
+            users = db.query(User).filter(User.id.in_(missing_user_ids)).all()
+            for u in users:
+                u_data = {
+                    "name": u.name,
+                    "avatar_url": u.avatar_url,
+                    "university": u.university,
+                }
+                users_map[str(u.id)] = u_data
+                redis_client.set_cached_user_brief(str(u.id), u_data, ttl=600)
+        except Exception:
+            pass
+
+    questions_map = {}
+    if q_ids:
+        try:
+            questions = db.query(Question).filter(Question.id.in_(q_ids)).all()
+            for q in questions:
+                questions_map[q.id] = {
+                    "title": q.title,
+                    "difficulty": q.difficulty,
+                }
+        except Exception:
+            pass
+
+    def _format_item(s: Dict[str, Any], is_evaluating: bool = False) -> Dict[str, Any]:
+        sid = s.get("submission_id") or s.get("submissionId")
+        uid = str(s.get("student_id") or s.get("userId") or s.get("user_id") or "")
+        qid_val = s.get("question_id") or s.get("questionId")
+        try:
+            qid_int = int(qid_val)
+        except (ValueError, TypeError):
+            qid_int = qid_val
+
+        u_info = users_map.get(uid, {})
+        q_info = questions_map.get(qid_int, {}) if isinstance(qid_int, int) else {}
+
+        student_name = u_info.get("name") or (f"Aluno {uid}" if uid else "Aluno Anônimo")
+        q_title = q_info.get("title") or s.get("questionTitle") or f"Questão #{qid_val}"
+        diff = q_info.get("difficulty") or s.get("difficulty") or "Médio"
+
+        if is_evaluating:
+            display_status = "Avaliando"
+            outcome = "Avaliando"
+            exec_time = None
+        else:
+            raw_status = s.get("status", "DONE")
+            outcome = s.get("outcome") or ("SUCCESS" if s.get("is_correct") else raw_status)
+            display_status = "DONE"
+            exec_time = s.get("execution_time_ms") or s.get("executionTimeMs")
+
+        created_at = s.get("created_at") or s.get("createdAt")
+
+        return {
+            "submissionId": sid,
+            "studentName": student_name,
+            "studentAvatar": u_info.get("avatar_url"),
+            "studentUniversity": u_info.get("university"),
+            "questionId": qid_val,
+            "questionTitle": q_title,
+            "difficulty": diff,
+            "status": display_status,
+            "outcome": outcome,
+            "executionTimeMs": float(exec_time) if exec_time is not None else None,
+            "createdAt": created_at,
+            "isCorrect": bool(s.get("is_correct", False) or outcome == "SUCCESS"),
+        }
+
+    # 4. Separação: Submissões atualmente na fila / em avaliação (PROCESSING / QUEUED)
+    # e submissões já concluídas do DynamoDB (SUCCESS, WRONG_ANSWER, ERROR, DONE)
+    processing_raw = [s for s in all_raw if s.get("status") in ["PROCESSING", "QUEUED"]]
+    completed_raw = [s for s in all_raw if s.get("status") not in ["PROCESSING", "QUEUED"]]
+
+    # Se o SQS tiver mensagens registradas, limitamos aos K mais recentes na fila
+    if total_sqs_active > 0:
+        evaluating_slice = processing_raw[:total_sqs_active]
+    else:
+        # Se o SQS estiver com 0 mensagens, apenas consideramos se foi submetido há menos de 60 segundos
+        now_ts = datetime.now(timezone.utc).timestamp()
+        evaluating_slice = []
+        for s in processing_raw:
+            dt_str = s.get("created_at") or s.get("createdAt")
+            try:
+                item_ts = datetime.fromisoformat(dt_str.replace("Z", "+00:00")).timestamp()
+                if (now_ts - item_ts) <= 60:
+                    evaluating_slice.append(s)
+            except Exception:
+                pass
+
+    k_evaluating = len(evaluating_slice)
+    evaluating_items = [_format_item(s, is_evaluating=True) for s in evaluating_slice]
+
+    # As 20 - K vagas restantes vêm dos logs mais recentes do DynamoDB
+    needed_completed = max(0, 20 - k_evaluating)
+    completed_items = [_format_item(s, is_evaluating=False) for s in completed_raw[:needed_completed]]
+
+    # Lista final com exatamente até 20 itens
+    final_items = evaluating_items + completed_items
+
+    return {
+        "queueStats": {
+            "approximateMessages": approx_messages,
+            "inFlightMessages": in_flight,
+            "totalQueue": total_sqs_active,
+            "status": "OPERATIONAL",
+            "updatedAt": datetime.now(timezone.utc).isoformat(),
+        },
+        "liveItems": final_items[:20]
     }
 
 @router.get("/{submission_id}/status")

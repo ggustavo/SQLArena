@@ -117,6 +117,7 @@ def update_profile(
             db.rollback()
             raise HTTPException(status_code=409, detail="E-mail já cadastrado.")
         db.refresh(user)
+        redis_client.delete_user_brief(user.id)
         if "name" in changes:
             redis_client.invalidate_ranking()
         audit_user("USER_UPDATE", user.id, user, changes)
@@ -172,6 +173,7 @@ async def upload_avatar(
     user.avatar_url = avatar_url
     db.commit()
     db.refresh(user)
+    redis_client.delete_user_brief(user.id)
     redis_client.invalidate_ranking()
 
     audit_user("USER_AVATAR_UPLOAD", user.id, user, {
@@ -230,6 +232,7 @@ def delete_my_avatar(
     user.avatar_url = None
     db.commit()
     db.refresh(user)
+    redis_client.delete_user_brief(user.id)
     redis_client.invalidate_ranking()
     audit_user("USER_AVATAR_DELETE", user.id, user, {"s3_key": s3_key})
     return user_response(user)
