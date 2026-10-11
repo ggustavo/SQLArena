@@ -19,9 +19,9 @@ class Settings(BaseSettings):
     RDS_USER: str = "postgres"
     RDS_PASSWORD: str = "postgrespassword"
     RDS_DB_NAME: str = "app_db"
-    DB_POOL_SIZE: int = 15
-    DB_MAX_OVERFLOW: int = 15
-    DB_POOL_TIMEOUT: int = 3
+    DB_POOL_SIZE: int = 3
+    DB_MAX_OVERFLOW: int = 2
+    DB_POOL_TIMEOUT: int = 5
 
     # PostgreSQL Local (Sandbox exclusivo do Worker)
     SANDBOX_DATABASE_URL: Optional[str] = None

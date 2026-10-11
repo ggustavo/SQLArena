@@ -109,6 +109,9 @@ class SQLArenaStudent(HttpUser):
 
     def on_start(self):
         """Inicializa a sessão: cadastra um aluno único e obtém o token JWT."""
+        if hasattr(self.client, "base_url") and self.client.base_url:
+            self.client.base_url = self.client.base_url.rstrip("/")
+
         self.user_id = None
         self.token = None
         self.available_question_ids = list(SOLUTIONS_MAP.keys())
@@ -289,6 +292,9 @@ class SQLArenaInstructor(HttpUser):
 
     def on_start(self):
         """Faz login como Admin / Instrutor padrão do sistema."""
+        if hasattr(self.client, "base_url") and self.client.base_url:
+            self.client.base_url = self.client.base_url.rstrip("/")
+
         self.token = None
         login_payload = {
             "email": "admin@sqlarena.com",

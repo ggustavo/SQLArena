@@ -97,6 +97,25 @@ app = FastAPI(
     lifespan=lifespan
 )
 
+# Middleware ASGI para normalização de barras duplicadas na URL (ex: //api/submissions -> /api/submissions)
+class DoubleSlashMiddleware:
+    """Evita erros 405/404 causados por trailing slash no base_url de clientes HTTP como Locust."""
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] == "http":
+            path = scope.get("path", "")
+            if "//" in path:
+                import re
+                clean_path = re.sub(r"/+", "/", path)
+                scope["path"] = clean_path
+                if "raw_path" in scope:
+                    scope["raw_path"] = clean_path.encode("utf-8")
+        await self.app(scope, receive, send)
+
+app.add_middleware(DoubleSlashMiddleware)
+
 # Configuração de CORS para permitir requisições do Frontend SPA
 app.add_middleware(
     CORSMiddleware,
