@@ -53,9 +53,6 @@ DB_MAX_OVERFLOW=5
 DB_POOL_TIMEOUT=15
 EOT
 
-    # Atualiza codigo do repositorio na Golden AMI para garantir ultimas correcoes
-    cd /opt/sqlarena
-    git fetch origin main && git reset --hard origin/main
     export PYTHONPATH="."
     /opt/sqlarena/app/.venv/bin/python app/database/seed.py || echo "[WARN] Seed ja executado anteriormente ou aguardando readiness."
 
