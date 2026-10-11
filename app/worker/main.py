@@ -1,5 +1,6 @@
 import json
 import logging
+import os
 import signal
 import sys
 import time
@@ -7,6 +8,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 import httpx
+
+try:
+    import psutil
+except ImportError:
+    psutil = None
 
 _project_root = Path(__file__).resolve().parent.parent.parent
 if str(_project_root) not in sys.path:
@@ -30,6 +36,7 @@ class SubmissionWorker:
     - Executa a Sandbox no PostgreSQL local da própria máquina EC2.
     - Rastreabilidade ponta a ponta com cronometragem granular de cada etapa.
     - Notifica a conclusão via HTTP (ALB/Backend) para que o Backend atualize pontuações e caches.
+    - Captura métricas de consumo de CPU da máquina Linux para auditoria operacional.
     - Painel de estatísticas de sessão e heartbeat de monitoramento.
     """
 
@@ -47,6 +54,80 @@ class SubmissionWorker:
             "notified_errors": 0,
         }
         self.empty_poll_counter = 0
+        self._init_cpu_metrics()
+
+    def _init_cpu_metrics(self):
+        """Inicializa medição de ticks de CPU para cálculo não-bloqueante."""
+        self.last_proc_stat = self._read_proc_stat()
+        if psutil is not None:
+            try:
+                psutil.cpu_percent(interval=None)
+            except Exception:
+                pass
+
+    def _read_proc_stat(self) -> Optional[tuple[float, float]]:
+        """Lê ticks do kernel Linux (/proc/stat): (idle, total)."""
+        stat_path = Path("/proc/stat")
+        if not stat_path.exists():
+            return None
+        try:
+            with open(stat_path, "r") as f:
+                line = f.readline()
+            parts = [float(x) for x in line.split()[1:]]
+            idle = parts[3] + (parts[4] if len(parts) > 4 else 0.0)
+            total = sum(parts)
+            return idle, total
+        except Exception:
+            return None
+
+    def get_cpu_metrics(self) -> dict:
+        """
+        Captura o consumo de CPU da máquina Linux de forma não-bloqueante.
+        Retorna percentual de CPU e carga média do sistema (load average).
+        """
+        cpu_percent = None
+        load_1m = None
+
+        # 1. Tenta psutil (não-bloqueante, cross-platform)
+        if psutil is not None:
+            try:
+                cpu_percent = round(psutil.cpu_percent(interval=None), 1)
+            except Exception:
+                cpu_percent = None
+
+        # 2. Fallback nativo para /proc/stat do Linux caso psutil não retorne
+        if cpu_percent is None:
+            curr_stat = self._read_proc_stat()
+            if curr_stat and self.last_proc_stat:
+                idle_delta = curr_stat[0] - self.last_proc_stat[0]
+                total_delta = curr_stat[1] - self.last_proc_stat[1]
+                if total_delta > 0:
+                    cpu_percent = round((1.0 - (idle_delta / total_delta)) * 100.0, 1)
+                else:
+                    cpu_percent = 0.0
+                self.last_proc_stat = curr_stat
+            elif curr_stat:
+                self.last_proc_stat = curr_stat
+                cpu_percent = 0.0
+            else:
+                cpu_percent = 0.0
+
+        # 3. Load average nativo do Linux
+        try:
+            loadavg_path = Path("/proc/loadavg")
+            if loadavg_path.exists():
+                parts = loadavg_path.read_text().split()
+                if parts:
+                    load_1m = round(float(parts[0]), 2)
+            elif hasattr(os, "getloadavg"):
+                load_1m = round(os.getloadavg()[0], 2)
+        except Exception:
+            pass
+
+        return {
+            "cpu_percent": cpu_percent if cpu_percent is not None else 0.0,
+            "load_1m": load_1m,
+        }
 
     def print_startup_banner(self):
         """Imprime banner de inicialização e diagnóstico do Worker."""
@@ -172,7 +253,12 @@ class SubmissionWorker:
         else:
             self.stats["syntax_error"] += 1
 
-        # 2. Notifica o Backend via HTTP (ALB) com o resultado
+        # 2. Captura consumo de CPU da máquina Linux após execução
+        cpu_info = self.get_cpu_metrics()
+        cpu_pct = cpu_info.get("cpu_percent", 0.0)
+        load_1m = cpu_info.get("load_1m")
+
+        # 3. Notifica o Backend via HTTP (ALB) com o resultado
         callback_data = {
             "submissionId": submission_id,
             "userId": user_id,
@@ -184,12 +270,13 @@ class SubmissionWorker:
             "errorMessage": err_msg,
             "columns": cols,
             "rows": rows,
-            "studentHash": student_hash
+            "studentHash": student_hash,
+            "cpuPercent": cpu_pct,
         }
 
         notified, callback_res, cb_time_ms = self._notify_backend(callback_data)
 
-        # 3. Confirmação e descarte na fila SQS
+        # 4. Confirmação e descarte na fila SQS
         sqs_del_ms = 0.0
         if receipt_handle and notified:
             t_sqs = time.perf_counter()
@@ -202,11 +289,14 @@ class SubmissionWorker:
 
         pipeline_duration_ms = round((time.perf_counter() - pipeline_start) * 1000, 2)
         status_symbol = "✅" if outcome == "SUCCESS" else ("❌" if outcome == "WRONG_ANSWER" else "⚠")
+        cpu_log_str = f" | CPU: {cpu_pct}%"
+        if load_1m is not None:
+            cpu_log_str += f" (load 1m: {load_1m})"
 
         logger.info("├" + "─" * 78 + "┤")
         logger.info(
             f"│ 🏁 [FINALIZADO] {status_symbol} Status: {outcome} | Duração Total: {pipeline_duration_ms:.2f} ms "
-            f"(Query PG: {exec_time:.2f} ms | Callback: {cb_time_ms:.2f} ms | SQS: {sqs_del_ms:.2f} ms)"
+            f"(Query PG: {exec_time:.2f} ms | Callback: {cb_time_ms:.2f} ms | SQS: {sqs_del_ms:.2f} ms{cpu_log_str})"
         )
         logger.info("└" + "─" * 78 + "┘")
 
@@ -224,15 +314,22 @@ class SubmissionWorker:
         return False
 
     def log_heartbeat(self):
-        """Emite log periódico de liveness e status das métricas da sessão."""
+        """Emite log periódico de liveness e status das métricas da sessão com CPU da máquina."""
         uptime_seconds = int(time.time() - self.start_time)
         hours, remainder = divmod(uptime_seconds, 3600)
         minutes, seconds = divmod(remainder, 60)
         uptime_str = f"{hours:02d}:{minutes:02d}:{seconds:02d}"
 
+        cpu_info = self.get_cpu_metrics()
+        cpu_pct = cpu_info.get("cpu_percent", 0.0)
+        load_1m = cpu_info.get("load_1m")
+        cpu_hb_str = f" | CPU: {cpu_pct}%"
+        if load_1m is not None:
+            cpu_hb_str += f" (load 1m: {load_1m})"
+
         cached_count = len(self.executor.cached_hashes)
         logger.info(
-            f"[HEARTBEAT] Worker ativo | Fila: '{self.sqs.queue_name}' | "
+            f"[HEARTBEAT] Worker ativo | Fila: '{self.sqs.queue_name}'{cpu_hb_str} | "
             f"Processadas: {self.stats['total']} (✅ {self.stats['success']} | "
             f"❌ {self.stats['wrong_answer']} | ⚠ {self.stats['syntax_error']} | "
             f"⏱ {self.stats['timeout']}) | Hashes em RAM: {cached_count} | Uptime: {uptime_str}"

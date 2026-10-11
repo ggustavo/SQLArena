@@ -16,3 +16,4 @@ httpx>=0.27.0
 pytest>=8.0.0
 locust>=2.30.0
 pillow>=10.0.0
+psutil>=5.9.0

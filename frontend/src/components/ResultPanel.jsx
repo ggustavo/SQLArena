@@ -10,12 +10,20 @@ export default function ResultPanel({ pollStage, result, error, isRunning }) {
           Console de Execução & Resultado
         </span>
 
-        {result?.executionTimeMs && (
-          <div className="flex items-center gap-1.5 text-xs text-slate-400">
-            <Clock className="w-3.5 h-3.5 text-indigo-400" />
-            <span>Tempo: <strong className="text-slate-200">{result.executionTimeMs}ms</strong></span>
-          </div>
-        )}
+        <div className="flex items-center gap-3">
+          {result?.executionTimeMs && (
+            <div className="flex items-center gap-1.5 text-xs text-slate-400">
+              <Clock className="w-3.5 h-3.5 text-indigo-400" />
+              <span>Tempo: <strong className="text-slate-200">{result.executionTimeMs}ms</strong></span>
+            </div>
+          )}
+          {result?.cpuPercent !== undefined && result?.cpuPercent !== null && (
+            <div className="flex items-center gap-1.5 text-xs text-slate-400">
+              <Cpu className="w-3.5 h-3.5 text-emerald-400" />
+              <span>CPU: <strong className="text-slate-200">{result.cpuPercent}%</strong></span>
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Body */}

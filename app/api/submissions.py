@@ -44,6 +44,8 @@ class SubmissionCallbackRequest(BaseModel):
     rows: List[Dict[str, Any]] = []
     student_hash: Optional[str] = None
     studentHash: Optional[str] = None
+    cpu_percent: Optional[float] = None
+    cpuPercent: Optional[float] = None
 
 @router.post("", status_code=status.HTTP_202_ACCEPTED)
 def submit_query(
@@ -178,6 +180,7 @@ def process_submission_callback(
     exec_time = payload.execution_time_ms if payload.execution_time_ms is not None else (payload.executionTimeMs or 0.0)
     err_msg = payload.error_message or payload.errorMessage
     student_hash = payload.student_hash or payload.studentHash
+    cpu_percent = payload.cpu_percent if payload.cpu_percent is not None else payload.cpuPercent
 
     points_awarded = 0
 
@@ -215,6 +218,7 @@ def process_submission_callback(
         "rows": payload.rows,
         "strictModeHashMatched": is_correct,
         "finishedAt": datetime.now(timezone.utc).isoformat(),
+        "cpuPercent": cpu_percent,
     }
     if sub_id:
         redis_client.set_submission_status(sub_id, final_data)
@@ -228,7 +232,8 @@ def process_submission_callback(
                 is_correct=is_correct,
                 execution_time_ms=exec_time,
                 error_message=err_msg,
-                answer_hash=student_hash
+                answer_hash=student_hash,
+                cpu_percent=cpu_percent,
             )
         except Exception:
             pass

@@ -200,6 +200,7 @@ class DynamoDBManager:
         pg_error: Optional[str] = None,
         hash_result: Optional[str] = None,
         created_at: Optional[str] = None,
+        cpu_percent: Optional[float] = None,
     ) -> Dict[str, Any]:
         """
         Grava um registro completo e imutável de execução da submissão no DynamoDB.
@@ -225,6 +226,8 @@ class DynamoDBManager:
             item["pg_error"] = str(pg_error)
         if hash_result:
             item["hash_result"] = str(hash_result)
+        if cpu_percent is not None:
+            item["cpu_percent"] = Decimal(str(round(cpu_percent, 1)))
 
         try:
             self.table.put_item(Item=item)
@@ -246,6 +249,7 @@ class DynamoDBManager:
         execution_time_ms: Optional[float] = None,
         pg_error: Optional[str] = None,
         hash_result: Optional[str] = None,
+        cpu_percent: Optional[float] = None,
     ) -> Dict[str, Any]:
         """
         Atualiza o status de uma submissão existente (ex: de PENDING para SUCCESS/ERROR).
@@ -271,6 +275,10 @@ class DynamoDBManager:
         if hash_result is not None:
             update_expr_parts.append("hash_result = :hash_res")
             expr_values[":hash_res"] = hash_result
+
+        if cpu_percent is not None:
+            update_expr_parts.append("cpu_percent = :cpu_pct")
+            expr_values[":cpu_pct"] = Decimal(str(round(cpu_percent, 1)))
 
         update_expr = "SET " + ", ".join(update_expr_parts)
 
@@ -307,7 +315,8 @@ class DynamoDBManager:
             query=sub_data.get("query", ""),
             status=sub_data.get("status", "PROCESSING"),
             is_correct=sub_data.get("strictModeHashMatched", False),
-            created_at=sub_data.get("createdAt") or sub_data.get("created_at")
+            created_at=sub_data.get("createdAt") or sub_data.get("created_at"),
+            cpu_percent=sub_data.get("cpuPercent") or sub_data.get("cpu_percent")
         )
 
     def update_submission_result(
@@ -318,6 +327,7 @@ class DynamoDBManager:
         execution_time_ms: Optional[float] = None,
         error_message: Optional[str] = None,
         answer_hash: Optional[str] = None,
+        cpu_percent: Optional[float] = None,
     ) -> Dict[str, Any]:
         """Alias para update_submission_status."""
         return self.update_submission_status(
@@ -326,7 +336,8 @@ class DynamoDBManager:
             is_correct=is_correct,
             execution_time_ms=execution_time_ms,
             pg_error=error_message,
-            hash_result=answer_hash
+            hash_result=answer_hash,
+            cpu_percent=cpu_percent,
         )
 
     # ----------------------------------------------------------------------

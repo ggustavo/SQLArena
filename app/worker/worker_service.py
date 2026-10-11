@@ -187,6 +187,13 @@ class SQLArenaWorker:
         else:
             verdict = "COMPILATION_ERROR"
 
+        cpu_pct = 0.0
+        try:
+            import psutil
+            cpu_pct = round(psutil.cpu_percent(interval=None), 1)
+        except Exception:
+            pass
+
         # 3. Persiste o log no DynamoDB
         log_entry = {
             "submission_id": submission_id,
@@ -196,6 +203,7 @@ class SQLArenaWorker:
             "execution_time_ms": exec_result["elapsed_ms"],
             "diagnostic_message": exec_result["diagnostic"],
             "submitted_sql": sql_query,
+            "cpu_percent": cpu_pct,
             "created_at": int(time.time()),
         }
         self.log_submission_to_dynamo(log_entry)
