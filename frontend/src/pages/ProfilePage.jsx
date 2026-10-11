@@ -17,6 +17,7 @@ import {
   AlertTriangle,
 } from 'lucide-react';
 import { updateProfile, uploadAvatar, deleteAvatar, deleteMyAccount } from '../services/authService';
+import UserAvatar from '../components/UserAvatar';
 
 export default function ProfilePage({ user, onBack, onUpdated, onAccountDeleted }) {
   const [name, setName] = useState(user.name || '');
@@ -32,6 +33,8 @@ export default function ProfilePage({ user, onBack, onUpdated, onAccountDeleted 
   const [uploadingAvatar, setUploadingAvatar] = useState(false);
   const [deletingAvatar, setDeletingAvatar] = useState(false);
   const [deletingAccount, setDeletingAccount] = useState(false);
+  const [previewUrl, setPreviewUrl] = useState(null);
+  const [avatarTimestamp, setAvatarTimestamp] = useState(Date.now());
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
 
@@ -52,14 +55,21 @@ export default function ProfilePage({ user, onBack, onUpdated, onAccountDeleted 
       return;
     }
 
+    // Pré-visualização local instantânea antes do término do upload
+    const localPreview = URL.createObjectURL(file);
+    setPreviewUrl(localPreview);
+
     setUploadingAvatar(true);
     setError('');
     setMessage('');
     try {
       const updated = await uploadAvatar(file);
       onUpdated(updated);
+      setAvatarTimestamp(Date.now());
+      setPreviewUrl(null);
       setMessage('Foto de perfil redimensionada e salva no Amazon S3 com sucesso!');
     } catch (err) {
+      setPreviewUrl(null);
       setError(err.response?.data?.detail || 'Erro ao enviar a imagem.');
     } finally {
       setUploadingAvatar(false);
@@ -74,6 +84,8 @@ export default function ProfilePage({ user, onBack, onUpdated, onAccountDeleted 
     setMessage('');
     try {
       const updated = await deleteAvatar();
+      setPreviewUrl(null);
+      setAvatarTimestamp(Date.now());
       onUpdated(updated);
       setMessage('Foto de perfil removida com sucesso.');
     } catch (err) {
@@ -158,16 +170,16 @@ export default function ProfilePage({ user, onBack, onUpdated, onAccountDeleted 
           <div className="flex items-center gap-5">
             {/* Avatar with image preview and upload trigger */}
             <div className="relative group">
-              <div className="w-20 h-20 rounded-2xl overflow-hidden bg-indigo-600 dark:bg-indigo-500 text-white font-black text-2xl flex items-center justify-center shadow-md shadow-indigo-600/20 border-2 border-indigo-200 dark:border-indigo-800">
-                {user.avatarUrl ? (
-                  <img
-                    src={user.avatarUrl}
-                    alt={user.name}
-                    className="w-full h-full object-cover"
-                  />
-                ) : (
-                  <span>{name.charAt(0).toUpperCase() || 'U'}</span>
-                )}
+              <div className="w-20 h-20 rounded-2xl overflow-hidden shadow-md shadow-indigo-600/20 border-2 border-indigo-200 dark:border-indigo-800">
+                <UserAvatar
+                  user={user}
+                  avatarUrl={previewUrl || user.avatarUrl}
+                  name={name}
+                  timestamp={avatarTimestamp}
+                  className="w-full h-full"
+                  textClassName="text-2xl font-black"
+                  fallbackBg="bg-indigo-600 dark:bg-indigo-500 text-white"
+                />
               </div>
 
               {/* Upload Overlay Button */}
@@ -202,11 +214,11 @@ export default function ProfilePage({ user, onBack, onUpdated, onAccountDeleted 
               <p className="text-sm text-slate-500 dark:text-slate-400">
                 {email}
               </p>
-              {user.avatarUrl && (
+              {(user.avatarUrl || previewUrl) && (
                 <button
                   type="button"
                   onClick={handleRemoveAvatar}
-                  disabled={deletingAvatar}
+                  disabled={deletingAvatar || uploadingAvatar}
                   className="mt-1.5 inline-flex items-center gap-1 text-xs text-rose-500 hover:text-rose-600 transition cursor-pointer"
                 >
                   <Trash2 size={12} /> Remover foto de perfil

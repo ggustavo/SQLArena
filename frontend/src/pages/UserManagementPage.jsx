@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { ArrowLeft, Search, ShieldCheck, UserRound, UsersRound, AlertCircle, CheckCircle2, Trash2 } from 'lucide-react';
 import { getUsers, setUserRole, deleteUser } from '../services/userService';
+import UserAvatar from '../components/UserAvatar';
 
 export default function UserManagementPage({ currentUser, onBack }) {
   const [search, setSearch] = useState('');
@@ -178,13 +179,12 @@ export default function UserManagementPage({ currentUser, onBack }) {
                     >
                       <td className="py-4 px-6">
                         <div className="flex items-center gap-3">
-                          <div className="w-10 h-10 rounded-2xl overflow-hidden bg-indigo-100 dark:bg-indigo-950/80 text-indigo-700 dark:text-indigo-300 font-bold text-xs flex items-center justify-center shrink-0 border border-indigo-200/60 dark:border-indigo-800/60">
-                            {user.avatarUrl ? (
-                              <img src={user.avatarUrl} alt={user.name} className="w-full h-full object-cover" />
-                            ) : (
-                              <span>{user.name?.charAt(0).toUpperCase() || 'U'}</span>
-                            )}
-                          </div>
+                          <UserAvatar
+                            user={user}
+                            className="w-10 h-10 rounded-2xl border border-indigo-200/60 dark:border-indigo-800/60"
+                            textClassName="text-xs font-bold"
+                            fallbackBg="bg-indigo-100 dark:bg-indigo-950/80 text-indigo-700 dark:text-indigo-300"
+                          />
                           <div>
                             <div className="font-bold text-slate-900 dark:text-white flex items-center gap-2">
                               <span>{user.name}</span>

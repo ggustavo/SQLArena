@@ -15,6 +15,8 @@ import {
   UserRound,
   UsersRound,
 } from 'lucide-react';
+import UserAvatar from './UserAvatar';
+
 export default function Navbar({
   user,
   onLogout,
@@ -123,17 +125,12 @@ export default function Navbar({
                 onClick={() => setDropdownOpen(!dropdownOpen)}
                 className="flex items-center gap-2.5 p-1.5 pr-3 rounded-2xl bg-slate-100/80 dark:bg-[#252a35] hover:bg-slate-200/80 dark:hover:bg-[#2e3442] border border-slate-200 dark:border-[#323946] transition cursor-pointer"
               >
-                {user?.avatarUrl ? (
-                  <img
-                    src={user.avatarUrl}
-                    alt={user.name}
-                    className="w-8 h-8 rounded-full object-cover border border-slate-200 dark:border-[#353d4d]"
-                  />
-                ) : (
-                  <div className="w-8 h-8 rounded-full bg-slate-800 dark:bg-slate-200 text-white dark:text-slate-900 font-bold flex items-center justify-center text-xs shadow-xs">
-                    {user?.name?.charAt(0) || 'U'}
-                  </div>
-                )}
+                <UserAvatar
+                  user={user}
+                  className="w-8 h-8 rounded-full border border-slate-200 dark:border-[#353d4d]"
+                  textClassName="text-xs font-bold"
+                  fallbackBg="bg-slate-800 dark:bg-slate-200 text-white dark:text-slate-900"
+                />
                 <div className="hidden md:block text-left">
                   <div className="text-xs sm:text-sm font-bold text-slate-900 dark:text-slate-100 leading-tight">
                     {user?.name || 'Usuário'}
@@ -150,17 +147,12 @@ export default function Navbar({
                 <div className="absolute right-0 mt-2 w-72 rounded-3xl bg-white dark:bg-[#1f232b] border border-slate-200 dark:border-[#323846] shadow-2xl p-2.5 z-50 text-sm space-y-1 divide-y divide-slate-100 dark:divide-[#2d3340] animate-in fade-in duration-100">
                   {/* User Info Header */}
                   <div className="p-3 flex items-start gap-3">
-                    {user?.avatarUrl ? (
-                      <img
-                        src={user.avatarUrl}
-                        alt={user.name}
-                        className="w-10 h-10 rounded-xl object-cover shrink-0 border border-slate-200 dark:border-[#353d4d]"
-                      />
-                    ) : (
-                      <div className="w-10 h-10 rounded-xl bg-indigo-600 text-white font-bold flex items-center justify-center text-sm shrink-0 shadow-xs">
-                        {user?.name?.charAt(0) || 'U'}
-                      </div>
-                    )}
+                    <UserAvatar
+                      user={user}
+                      className="w-10 h-10 rounded-xl border border-slate-200 dark:border-[#353d4d]"
+                      textClassName="text-sm font-bold"
+                      fallbackBg="bg-indigo-600 text-white"
+                    />
                     <div className="min-w-0 flex-1">
                       <div className="font-bold text-slate-900 dark:text-white text-base truncate">
                         {user?.name}
