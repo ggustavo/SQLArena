@@ -87,28 +87,32 @@ def update_profile(
     if payload.password and not verify_password(payload.currentPassword, user.password_hash):
         raise HTTPException(status_code=400, detail="Senha atual incorreta.")
 
+    db_user = db.query(User).filter(User.id == user.id).first()
+    if not db_user:
+        raise HTTPException(status_code=404, detail="Usuário não encontrado.")
+
     changes = {}
-    if payload.name is not None and payload.name != user.name:
-        changes["name"] = {"before": user.name, "after": payload.name}
-        user.name = payload.name
+    if payload.name is not None and payload.name != db_user.name:
+        changes["name"] = {"before": db_user.name, "after": payload.name}
+        db_user.name = payload.name
     if payload.email is not None:
         email = str(payload.email).strip().lower()
-        if email != user.email:
-            if db.query(User).filter(func.lower(User.email) == email, User.id != user.id).first():
+        if email != db_user.email:
+            if db.query(User).filter(func.lower(User.email) == email, User.id != db_user.id).first():
                 raise HTTPException(status_code=409, detail="E-mail já cadastrado.")
-            changes["email"] = {"before": user.email, "after": email}
-            user.email = email
+            changes["email"] = {"before": db_user.email, "after": email}
+            db_user.email = email
     if payload.password:
-        user.password_hash = get_password_hash(payload.password)
+        db_user.password_hash = get_password_hash(payload.password)
         changes["password"] = "changed"
 
     for field_name in ("university", "city", "state", "country"):
         if field_name in payload.model_fields_set:
             new_val = getattr(payload, field_name)
-            old_val = getattr(user, field_name)
+            old_val = getattr(db_user, field_name)
             if new_val != old_val:
                 changes[field_name] = {"before": old_val, "after": new_val}
-                setattr(user, field_name, new_val)
+                setattr(db_user, field_name, new_val)
 
     if changes:
         try:
@@ -116,12 +120,13 @@ def update_profile(
         except IntegrityError:
             db.rollback()
             raise HTTPException(status_code=409, detail="E-mail já cadastrado.")
-        db.refresh(user)
-        redis_client.delete_user_brief(user.id)
+        db.refresh(db_user)
+        redis_client.delete_user_brief(db_user.id)
+        redis_client.delete_cached_auth_user(db_user.id)
         if "name" in changes:
             redis_client.invalidate_ranking()
-        audit_user("USER_UPDATE", user.id, user, changes)
-    return user_response(user)
+        audit_user("USER_UPDATE", db_user.id, db_user, changes)
+    return user_response(db_user)
 
 
 @router.post("/me/avatar", response_model=UserResponse)
@@ -170,19 +175,26 @@ async def upload_avatar(
         raise HTTPException(status_code=500, detail="Falha ao salvar avatar no Amazon S3.")
 
     avatar_url = f"/api/users/{user.id}/avatar"
-    user.avatar_url = avatar_url
-    db.commit()
-    db.refresh(user)
+    db_user = db.query(User).filter(User.id == user.id).first()
+    if db_user:
+        db_user.avatar_url = avatar_url
+        db.commit()
+        db.refresh(db_user)
+        user_to_return = db_user
+    else:
+        user_to_return = user
+
     redis_client.delete_user_brief(user.id)
+    redis_client.delete_cached_auth_user(user.id)
     redis_client.invalidate_ranking()
 
-    audit_user("USER_AVATAR_UPLOAD", user.id, user, {
+    audit_user("USER_AVATAR_UPLOAD", user.id, user_to_return, {
         "s3_key": s3_key,
         "size_bytes": len(processed_bytes),
         "dimensions": f"{image.width}x{image.height}",
         "action": "image_rescaling_lanczos_256",
     })
-    return user_response(user)
+    return user_response(user_to_return)
 
 
 @router.get("/{user_id}/avatar")
@@ -229,13 +241,20 @@ def delete_my_avatar(
     except Exception as s3_err:
         logger.warning("Falha ao remover arquivo do avatar no S3: %s", s3_err)
 
-    user.avatar_url = None
-    db.commit()
-    db.refresh(user)
+    db_user = db.query(User).filter(User.id == user.id).first()
+    if db_user:
+        db_user.avatar_url = None
+        db.commit()
+        db.refresh(db_user)
+        user_to_return = db_user
+    else:
+        user_to_return = user
+
     redis_client.delete_user_brief(user.id)
+    redis_client.delete_cached_auth_user(user.id)
     redis_client.invalidate_ranking()
-    audit_user("USER_AVATAR_DELETE", user.id, user, {"s3_key": s3_key})
-    return user_response(user)
+    audit_user("USER_AVATAR_DELETE", user.id, user_to_return, {"s3_key": s3_key})
+    return user_response(user_to_return)
 
 
 @router.delete("/me", status_code=status.HTTP_200_OK)
@@ -256,8 +275,13 @@ def delete_my_account(
     user_data = {"id": user.id, "name": user.name, "email": user.email, "role": user.role}
     audit_user("USER_DELETE", user.id, user, user_data)
 
-    db.delete(user)
-    db.commit()
+    db_user = db.query(User).filter(User.id == user.id).first()
+    if db_user:
+        db.delete(db_user)
+        db.commit()
+
+    redis_client.delete_user_brief(user.id)
+    redis_client.delete_cached_auth_user(user.id)
     redis_client.invalidate_ranking()
     return {"detail": "Conta excluída com sucesso."}
 

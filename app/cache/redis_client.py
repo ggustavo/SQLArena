@@ -144,6 +144,35 @@ class RedisClient:
         except Exception:
             return False
 
+    def get_cached_auth_user(self, user_id: str) -> Optional[Dict[str, Any]]:
+        """Recupera dados de autenticação do usuário em cache no Redis."""
+        key = f"user:{user_id}:auth"
+        try:
+            val = self.client.get(key)
+            return json.loads(val) if val else None
+        except Exception as e:
+            logger.warning(f"Erro ao ler cache de autenticação do usuário {user_id}: {e}")
+            return None
+
+    def set_cached_auth_user(self, user_id: str, data: Dict[str, Any], ttl: int = 300) -> bool:
+        """Armazena dados de autenticação do usuário em cache no Redis (TTL 300s)."""
+        key = f"user:{user_id}:auth"
+        try:
+            self.client.set(key, json.dumps(data), ex=ttl)
+            return True
+        except Exception as e:
+            logger.warning(f"Erro ao salvar cache de autenticação do usuário {user_id}: {e}")
+            return False
+
+    def delete_cached_auth_user(self, user_id: str) -> bool:
+        """Invalida cache de autenticação do usuário."""
+        key = f"user:{user_id}:auth"
+        try:
+            self.client.delete(key)
+            return True
+        except Exception:
+            return False
+
     def set_cached_questions(self, role: str, data: List[Dict[str, Any]], ttl: int = 300) -> bool:
         """Armazena a lista de questões no cache Redis (TTL 300s)."""
         key = f"questions:list:{role.lower()}"

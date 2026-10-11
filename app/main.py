@@ -7,9 +7,11 @@ if str(_project_root) not in sys.path:
 
 import logging
 from contextlib import asynccontextmanager
-from fastapi import FastAPI
+from fastapi import FastAPI, Request, status
+from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
+from sqlalchemy.exc import TimeoutError as SQLAlchemyTimeoutError, OperationalError
 from app.config import settings
 from app.database.session import engine, Base
 from app.s3.s3_manager import S3Manager
@@ -109,6 +111,51 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# -----------------------------------------------------------------------------
+# Circuit Breaker & Auto-Recuperação do Pool do Banco de Dados (ORM)
+# -----------------------------------------------------------------------------
+@app.exception_handler(SQLAlchemyTimeoutError)
+async def handle_db_pool_timeout(request: Request, exc: SQLAlchemyTimeoutError):
+    logger.error(
+        f"[DB POOL TIMEOUT] Esgotamento do pool de conexões na rota '{request.url.path}': {exc}. "
+        "Executando auto-recuperação do ORM via engine.dispose()..."
+    )
+    try:
+        engine.dispose()
+        logger.info("[DB POOL RECOVERY] ✓ engine.dispose() executado com sucesso. Pool redefinido.")
+    except Exception as reset_err:
+        logger.error(f"[DB POOL RECOVERY ERROR] Falha ao resetar pool: {reset_err}")
+
+    return JSONResponse(
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        content={
+            "detail": "Serviço temporariamente sobrecarregado (fila de conexões do banco de dados esgotada). O pool foi reiniciado automaticamente. Tente novamente em instantes.",
+            "code": "DB_POOL_OVERLOAD"
+        },
+        headers={"Retry-After": "2"}
+    )
+
+@app.exception_handler(OperationalError)
+async def handle_db_operational_error(request: Request, exc: OperationalError):
+    logger.error(
+        f"[DB OPERATIONAL ERROR] Falha de comunicação/operação no banco na rota '{request.url.path}': {exc}. "
+        "Executando engine.dispose() para restabelecer conexões..."
+    )
+    try:
+        engine.dispose()
+        logger.info("[DB POOL RECOVERY] ✓ engine.dispose() executado após OperationalError.")
+    except Exception as reset_err:
+        logger.error(f"[DB POOL RECOVERY ERROR] Falha ao resetar pool: {reset_err}")
+
+    return JSONResponse(
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        content={
+            "detail": "Instabilidade momentânea de comunicação com o banco de dados. Conexões redefinidas.",
+            "code": "DB_CONNECTION_RESET"
+        },
+        headers={"Retry-After": "2"}
+    )
 
 # Endpoint de Health Check para o Application Load Balancer (ALB)
 @app.get("/health", tags=["Health"])

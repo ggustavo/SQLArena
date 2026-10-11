@@ -9,10 +9,11 @@ if db_url.startswith("postgresql://"):
 engine = create_engine(
     db_url,
     pool_pre_ping=True,
-    pool_size=3,
-    max_overflow=2,
+    pool_size=getattr(settings, "DB_POOL_SIZE", 15),
+    max_overflow=getattr(settings, "DB_MAX_OVERFLOW", 15),
     pool_recycle=180,
-    pool_timeout=10,
+    pool_timeout=getattr(settings, "DB_POOL_TIMEOUT", 3),
+    pool_reset_on_return="rollback",
 )
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
@@ -22,5 +23,8 @@ def get_db():
     db = SessionLocal()
     try:
         yield db
+    except Exception:
+        db.rollback()
+        raise
     finally:
         db.close()

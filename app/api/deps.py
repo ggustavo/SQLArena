@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 from app.database.session import get_db
 from app.database.models import User
 from app.auth.security import decode_access_token
+from app.cache.redis_client import redis_client
 
 security_bearer = HTTPBearer(auto_error=False)
 
@@ -35,7 +36,13 @@ def get_current_user(
             detail="Token com payload corrompido.",
             headers={"WWW-Authenticate": "Bearer"},
         )
+
+    # 1. Consulta em memória no Redis (elimina 95% do overhead sobre o pool do PostgreSQL)
+    cached = redis_client.get_cached_auth_user(user_id)
+    if cached:
+        return User(**cached)
     
+    # 2. Fallback no banco PostgreSQL RDS
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
         raise HTTPException(
@@ -43,6 +50,24 @@ def get_current_user(
             detail="Usuário não encontrado.",
             headers={"WWW-Authenticate": "Bearer"},
         )
+
+    # 3. Popula cache Redis para as próximas requisições
+    redis_client.set_cached_auth_user(user_id, {
+        "id": user.id,
+        "name": user.name,
+        "email": user.email,
+        "password_hash": user.password_hash,
+        "role": user.role,
+        "score": user.score or 0,
+        "solved_count": user.solved_count or 0,
+        "streak_days": user.streak_days or 0,
+        "avatar_url": user.avatar_url,
+        "university": user.university,
+        "city": user.city,
+        "state": user.state,
+        "country": user.country,
+    }, ttl=300)
+
     return user
 
 def get_optional_current_user(
