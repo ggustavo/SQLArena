@@ -36,7 +36,11 @@ logger = logging.getLogger("LocustTest")
 # -----------------------------------------------------------------------------
 # Carregamento do Banco de Soluções e Perguntas Oficiais
 # -----------------------------------------------------------------------------
-DATA_PATH = Path(__file__).resolve().parent / "app" / "database" / "initial_data.json"
+DATA_PATH = Path(__file__).resolve().parent.parent / "app" / "database" / "initial_data.json"
+if not DATA_PATH.exists():
+    DATA_PATH = Path(__file__).resolve().parent / "app" / "database" / "initial_data.json"
+if not DATA_PATH.exists():
+    DATA_PATH = Path("app/database/initial_data.json")
 
 CATALOG_QUESTIONS: List[Dict] = []
 SOLUTIONS_MAP: Dict[int, str] = {}
@@ -52,6 +56,7 @@ if DATA_PATH.exists():
                 sql = q.get("starterSql", "").strip()
                 if qid and sql:
                     SOLUTIONS_MAP[qid] = sql
+                    SOLUTIONS_MAP[str(qid)] = sql
     except Exception as e:
         logger.warning(f"Não foi possível carregar {DATA_PATH}: {e}")
 
@@ -145,7 +150,8 @@ class SQLArenaStudent(HttpUser):
                 if q_resp.status_code == 200:
                     q_list = q_resp.json()
                     if isinstance(q_list, list) and q_list:
-                        self.available_question_ids = [q["id"] for q in q_list if "id" in q]
+                        valid_ids = [q["id"] for q in q_list if ("id" in q and (q["id"] in SOLUTIONS_MAP or str(q["id"]) in SOLUTIONS_MAP))]
+                        self.available_question_ids = valid_ids if valid_ids else [q["id"] for q in q_list if "id" in q]
         except Exception:
             pass
 
@@ -165,30 +171,36 @@ class SQLArenaStudent(HttpUser):
     @task(4)
     def submit_sql_solution(self):
         """
-        Submete uma resposta SQL com mix probabilístico realista:
-        - 60% Gabarito Correto (SUCCESS -> pontuação + invalidação de ranking)
-        - 20% Resposta Incorreta (WRONG_ANSWER -> log no DynamoDB)
-        - 15% Erro de Sintaxe (SYNTAX_ERROR -> rollback + log no DynamoDB)
-        - 5%  Comando Proibido (SECURITY_BLOCK -> bloqueio defensivo)
+        Submete uma resposta SQL com mix probabilístico realista solicitado:
+        - 95% Gabarito Correto (SUCCESS -> pontuação + status Aprovado)
+        - 3% Resposta Incorreta (WRONG_ANSWER -> lógica divergente válida)
+        - 2% Erro de Sintaxe (SYNTAX_ERROR -> erro sintático pontual)
+        Taxa total de erro restrita a 5%.
         """
         if not self.available_question_ids:
             return
 
-        qid = random.choice(self.available_question_ids)
+        valid_qids = [q for q in self.available_question_ids if (q in SOLUTIONS_MAP or str(q) in SOLUTIONS_MAP)]
+        qid = random.choice(valid_qids) if valid_qids else random.choice(self.available_question_ids)
         dice = random.random()
 
-        if dice < 0.60 and qid in SOLUTIONS_MAP:
-            query = SOLUTIONS_MAP[qid]
+        base_solution = SOLUTIONS_MAP.get(qid) or SOLUTIONS_MAP.get(str(qid))
+        if not base_solution and SOLUTIONS_MAP:
+            base_solution = next(iter(SOLUTIONS_MAP.values()))
+
+        if dice < 0.95 and base_solution:
+            query = base_solution
             tag = "CORRECT"
-        elif dice < 0.80:
-            query = random.choice(WRONG_QUERIES)
+        elif dice < 0.98 and base_solution:
+            # 3% chance de resposta divergente (WRONG_ANSWER): altera ordenação/limite da query válida
+            query = base_solution.replace("DESC", "ASC").replace("LIMIT 5", "LIMIT 1")
+            if query == base_solution:
+                query = query + " LIMIT 1"
             tag = "WRONG"
-        elif dice < 0.95:
-            query = random.choice(SYNTAX_ERROR_QUERIES)
-            tag = "SYNTAX_ERR"
         else:
-            query = random.choice(SECURITY_BLOCK_QUERIES)
-            tag = "BLOCKED_DML"
+            # 2% chance de erro de sintaxe SQL (SYNTAX_ERROR)
+            query = "SELEC * FORM clientes WHERE id = 1;"
+            tag = "SYNTAX_ERR"
 
         payload = {
             "questionId": qid,

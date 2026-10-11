@@ -205,11 +205,27 @@ def process_submission_callback(
         except Exception as ex:
             db.rollback()
 
-    # 2. Atualiza status no Redis para polling do frontend
+    # 2. Atualiza status no Redis para polling do frontend preservando timestamp de criação
+    existing_redis = redis_client.get_submission_status(sub_id) if sub_id else None
+    created_at_val = (existing_redis.get("createdAt") or existing_redis.get("created_at")) if existing_redis else None
+    if not created_at_val and sub_id:
+        try:
+            doc = dynamo_manager.get_submission(sub_id)
+            if doc:
+                created_at_val = doc.get("created_at") or doc.get("createdAt")
+        except Exception:
+            pass
+    if not created_at_val:
+        created_at_val = datetime.now(timezone.utc).isoformat()
+
     final_data = {
         "submissionId": sub_id,
+        "submission_id": sub_id,
         "userId": uid,
+        "studentId": uid,
         "questionId": qid,
+        "questionTitle": (existing_redis.get("questionTitle") or existing_redis.get("question_title")) if existing_redis else None,
+        "difficulty": existing_redis.get("difficulty") if existing_redis else None,
         "status": "DONE",
         "outcome": payload.outcome,
         "pointsAwarded": points_awarded,
@@ -218,6 +234,8 @@ def process_submission_callback(
         "columns": payload.columns,
         "rows": payload.rows,
         "strictModeHashMatched": is_correct,
+        "createdAt": created_at_val,
+        "created_at": created_at_val,
         "finishedAt": datetime.now(timezone.utc).isoformat(),
         "cpuPercent": cpu_percent,
     }
@@ -282,23 +300,45 @@ def get_live_queue(
     except Exception:
         dynamo_submissions = []
 
-    # Mescla e desduplica (Redis tem o status mais em tempo real da memória)
-    seen_ids = set()
-    all_raw = []
+    # Mescla preservando sempre o timestamp de criação original (evita que registros percam a data)
+    merged_map: Dict[str, Dict[str, Any]] = {}
+    for s in dynamo_submissions:
+        sid = s.get("submission_id") or s.get("submissionId")
+        if sid:
+            merged_map[sid] = dict(s)
+
     for s in redis_submissions:
         sid = s.get("submissionId") or s.get("submission_id")
-        if sid and sid not in seen_ids:
-            seen_ids.add(sid)
-            all_raw.append(s)
+        if sid:
+            if sid in merged_map:
+                base = merged_map[sid]
+                merged = {**base, **s}
+                c_date = base.get("created_at") or base.get("createdAt") or s.get("created_at") or s.get("createdAt") or s.get("finishedAt")
+                merged["created_at"] = c_date
+                merged["createdAt"] = c_date
+                merged_map[sid] = merged
+            else:
+                c_date = s.get("created_at") or s.get("createdAt") or s.get("finishedAt") or datetime.now(timezone.utc).isoformat()
+                s_copy = dict(s)
+                s_copy["created_at"] = c_date
+                s_copy["createdAt"] = c_date
+                merged_map[sid] = s_copy
 
-    for s in dynamo_submissions:
-        sid = s.get("submissionId") or s.get("submission_id")
-        if sid and sid not in seen_ids:
-            seen_ids.add(sid)
-            all_raw.append(s)
+    all_raw = list(merged_map.values())
 
-    # Ordena por data decrescente (mais recente primeiro)
-    all_raw.sort(key=lambda x: str(x.get("created_at") or x.get("createdAt") or ""), reverse=True)
+    # Parser de timestamp robusto para ordenação cronológica decrescente estrita
+    def _parse_ts(item: Dict[str, Any]) -> float:
+        val = item.get("created_at") or item.get("createdAt") or item.get("finishedAt") or item.get("finished_at")
+        if not val:
+            return 0.0
+        try:
+            clean_str = str(val).replace("Z", "+00:00")
+            return datetime.fromisoformat(clean_str).timestamp()
+        except Exception:
+            return 0.0
+
+    # ORDENAÇÃO ESTRITA: O envio com o timestamp mais recente SEMPRE FICA NO TOPO (índice 0)!
+    all_raw.sort(key=_parse_ts, reverse=True)
 
     # Coleta IDs de usuários e questões para enriquecimento
     user_ids = {str(s.get("student_id") or s.get("userId") or s.get("user_id")) for s in all_raw if (s.get("student_id") or s.get("userId") or s.get("user_id"))}
@@ -346,7 +386,10 @@ def get_live_queue(
         except Exception:
             pass
 
-    def _format_item(s: Dict[str, Any], is_evaluating: bool = False) -> Dict[str, Any]:
+    now_ts = datetime.now(timezone.utc).timestamp()
+    formatted_items = []
+
+    for s in all_raw:
         sid = s.get("submission_id") or s.get("submissionId")
         uid = str(s.get("student_id") or s.get("userId") or s.get("user_id") or "")
         qid_val = s.get("question_id") or s.get("questionId")
@@ -362,19 +405,24 @@ def get_live_queue(
         q_title = q_info.get("title") or s.get("questionTitle") or f"Questão #{qid_val}"
         diff = q_info.get("difficulty") or s.get("difficulty") or "Médio"
 
-        if is_evaluating:
+        raw_status = s.get("status", "DONE")
+        item_ts = _parse_ts(s)
+
+        # Se estiver com status PROCESSING ou QUEUED e foi submetido recentemente (< 3 min) ou fila SQS ativa
+        is_actively_evaluating = (raw_status in ["PROCESSING", "QUEUED"]) and (now_ts - item_ts < 180 or total_sqs_active > 0)
+
+        if is_actively_evaluating:
             display_status = "Avaliando"
             outcome = "Avaliando"
             exec_time = None
         else:
-            raw_status = s.get("status", "DONE")
             outcome = s.get("outcome") or ("SUCCESS" if s.get("is_correct") else raw_status)
             display_status = "DONE"
             exec_time = s.get("execution_time_ms") or s.get("executionTimeMs")
 
-        created_at = s.get("created_at") or s.get("createdAt")
+        created_at = s.get("created_at") or s.get("createdAt") or s.get("finishedAt")
 
-        return {
+        formatted_items.append({
             "submissionId": sid,
             "studentName": student_name,
             "studentAvatar": u_info.get("avatar_url"),
@@ -387,38 +435,7 @@ def get_live_queue(
             "executionTimeMs": float(exec_time) if exec_time is not None else None,
             "createdAt": created_at,
             "isCorrect": bool(s.get("is_correct", False) or outcome == "SUCCESS"),
-        }
-
-    # 4. Separação: Submissões atualmente na fila / em avaliação (PROCESSING / QUEUED)
-    # e submissões já concluídas do DynamoDB (SUCCESS, WRONG_ANSWER, ERROR, DONE)
-    processing_raw = [s for s in all_raw if s.get("status") in ["PROCESSING", "QUEUED"]]
-    completed_raw = [s for s in all_raw if s.get("status") not in ["PROCESSING", "QUEUED"]]
-
-    # Se o SQS tiver mensagens registradas, limitamos aos K mais recentes na fila
-    if total_sqs_active > 0:
-        evaluating_slice = processing_raw[:total_sqs_active]
-    else:
-        # Se o SQS estiver com 0 mensagens, apenas consideramos se foi submetido há menos de 60 segundos
-        now_ts = datetime.now(timezone.utc).timestamp()
-        evaluating_slice = []
-        for s in processing_raw:
-            dt_str = s.get("created_at") or s.get("createdAt")
-            try:
-                item_ts = datetime.fromisoformat(dt_str.replace("Z", "+00:00")).timestamp()
-                if (now_ts - item_ts) <= 60:
-                    evaluating_slice.append(s)
-            except Exception:
-                pass
-
-    k_evaluating = len(evaluating_slice)
-    evaluating_items = [_format_item(s, is_evaluating=True) for s in evaluating_slice]
-
-    # As 20 - K vagas restantes vêm dos logs mais recentes do DynamoDB
-    needed_completed = max(0, 20 - k_evaluating)
-    completed_items = [_format_item(s, is_evaluating=False) for s in completed_raw[:needed_completed]]
-
-    # Lista final com exatamente até 20 itens
-    final_items = evaluating_items + completed_items
+        })
 
     return {
         "queueStats": {
@@ -428,7 +445,7 @@ def get_live_queue(
             "status": "OPERATIONAL",
             "updatedAt": datetime.now(timezone.utc).isoformat(),
         },
-        "liveItems": final_items[:20]
+        "liveItems": formatted_items[:20]
     }
 
 @router.get("/{submission_id}/status")

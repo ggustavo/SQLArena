@@ -78,7 +78,6 @@ export default function QuestionDashboard({ user, questions = [], onSelectQuesti
           <div>
             <h1 className="text-3xl sm:text-4xl font-black text-slate-900 dark:text-white tracking-tight flex items-center gap-2">
               <span>Mural de Questões</span>
-              <span>⚡️</span>
             </h1>
             <p className="text-base sm:text-lg text-slate-600 dark:text-slate-300 mt-2 leading-relaxed font-normal max-w-2xl">
               Pratique SQL com avaliação automatizada e execução direta no PostgreSQL 16.
