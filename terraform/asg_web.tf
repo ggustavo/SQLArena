@@ -48,10 +48,14 @@ DYNAMO_SUBMISSIONS_TABLE=${aws_dynamodb_table.submissions_log.name}
 DYNAMO_CRUD_TABLE_NAME=${aws_dynamodb_table.crud_actions_log.name}
 SQS_QUEUE_NAME=${aws_sqs_queue.submissions_queue.name}
 SQS_DLQ_NAME=${aws_sqs_queue.submissions_dlq.name}
+DB_POOL_SIZE=3
+DB_MAX_OVERFLOW=2
+DB_POOL_TIMEOUT=5
 EOT
 
-    # Executar o seed inicial do banco (tabelas, categorias e 21 questoes no RDS/S3/Redis)
+    # Atualiza codigo do repositorio na Golden AMI para garantir ultimas correcoes
     cd /opt/sqlarena
+    git fetch origin main && git reset --hard origin/main
     export PYTHONPATH="."
     /opt/sqlarena/app/.venv/bin/python app/database/seed.py || echo "[WARN] Seed ja executado anteriormente ou aguardando readiness."
 
