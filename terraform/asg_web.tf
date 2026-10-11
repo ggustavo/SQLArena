@@ -185,29 +185,17 @@ resource "aws_autoscaling_group" "web_asg" {
   }
 }
 
-# Target Tracking Policy de CPU para o ASG 1 (Scale Out > 70%, Scale In < 25%) - Apenas na Nuvem AWS
-resource "aws_autoscaling_policy" "web_cpu_target_tracking" {
-  count                  = var.is_local ? 0 : 1
-  name                   = "${var.project_name}-web-cpu-target-tracking"
-  autoscaling_group_name = aws_autoscaling_group.web_asg.name
-  policy_type            = "TargetTrackingScaling"
-
-  target_tracking_configuration {
-    predefined_metric_specification {
-      predefined_metric_type = "ASGAverageCPUUtilization"
-    }
-    target_value     = 50.0
-    disable_scale_in = false
-  }
-}
-
 # Políticas e Alarmes explícitos de CPU para Scale Out (> 70%) e Scale In (< 25%) - Apenas na Nuvem AWS
+# Conforme requisitos da Parte 2:
+# c) CPU > 70% por mais de 1 minuto -> escala horizontalmente (+1 instância, máx 3)
+# d) CPU < 25% por mais de 1 minuto -> reduz horizontalmente (-1 instância, mín 1)
+
 resource "aws_autoscaling_policy" "web_scale_out_policy" {
   count                  = var.is_local ? 0 : 1
   name                   = "${var.project_name}-web-scale-out"
   scaling_adjustment     = 1
   adjustment_type        = "ChangeInCapacity"
-  cooldown               = 300
+  cooldown               = 120
   autoscaling_group_name = aws_autoscaling_group.web_asg.name
 }
 
@@ -215,10 +203,10 @@ resource "aws_cloudwatch_metric_alarm" "web_cpu_high" {
   count               = var.is_local ? 0 : 1
   alarm_name          = "${var.project_name}-web-cpu-high"
   comparison_operator = "GreaterThanThreshold"
-  evaluation_periods  = 2
+  evaluation_periods  = 1
   metric_name         = "CPUUtilization"
   namespace           = "AWS/EC2"
-  period              = 120
+  period              = 60
   statistic           = "Average"
   threshold           = 70
 
@@ -234,7 +222,7 @@ resource "aws_autoscaling_policy" "web_scale_in_policy" {
   name                   = "${var.project_name}-web-scale-in"
   scaling_adjustment     = -1
   adjustment_type        = "ChangeInCapacity"
-  cooldown               = 300
+  cooldown               = 120
   autoscaling_group_name = aws_autoscaling_group.web_asg.name
 }
 
@@ -242,10 +230,10 @@ resource "aws_cloudwatch_metric_alarm" "web_cpu_low" {
   count               = var.is_local ? 0 : 1
   alarm_name          = "${var.project_name}-web-cpu-low"
   comparison_operator = "LessThanThreshold"
-  evaluation_periods  = 2
+  evaluation_periods  = 1
   metric_name         = "CPUUtilization"
   namespace           = "AWS/EC2"
-  period              = 120
+  period              = 60
   statistic           = "Average"
   threshold           = 25
 
