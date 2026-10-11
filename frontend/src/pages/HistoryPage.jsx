@@ -8,7 +8,6 @@ import {
   Loader2,
   Clock,
   Zap,
-  Cpu,
   Code2,
   Copy,
   Check,
@@ -312,13 +311,6 @@ export default function HistoryPage({ onBack, onOpenQuestion }) {
                       <span className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300">
                         <Zap className="w-3.5 h-3.5 text-amber-500" />
                         {sub.executionTimeMs}ms
-                      </span>
-                    )}
-
-                    {sub.cpuPercent !== undefined && sub.cpuPercent !== null && (
-                      <span className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-indigo-50 dark:bg-indigo-950 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800 font-bold">
-                        <Cpu className="w-3.5 h-3.5 text-indigo-500" />
-                        CPU: {sub.cpuPercent}%
                       </span>
                     )}
 

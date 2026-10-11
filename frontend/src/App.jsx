@@ -7,6 +7,7 @@ import ProfessorPage from './pages/ProfessorPage';
 import ProfilePage from './pages/ProfilePage';
 import UserManagementPage from './pages/UserManagementPage';
 import RankingPage from './pages/RankingPage';
+import DynamoLogsPage from './pages/DynamoLogsPage';
 import HistoryModal from './components/HistoryModal';
 import { getCurrentUser, logout } from './services/authService';
 import { getQuestions } from './services/questionService';
@@ -107,6 +108,7 @@ export default function App() {
         onOpenProfile={() => setCurrentView('profile')}
         onOpenRanking={() => setCurrentView('ranking')}
         onOpenHistory={() => setIsHistoryModalOpen(true)}
+        onOpenDynamoLogs={() => setCurrentView('dynamo-logs')}
       />
 
       <main className="flex-1 w-full">
@@ -133,6 +135,9 @@ export default function App() {
         )}
         {currentView === 'users' && user.role === 'INSTRUCTOR' && (
           <UserManagementPage currentUser={user} onBack={() => setCurrentView('instructor')} />
+        )}
+        {currentView === 'dynamo-logs' && (user.role === 'INSTRUCTOR' || user.role === 'ADMIN') && (
+          <DynamoLogsPage onBack={() => setCurrentView('instructor')} />
         )}
         {currentView === 'profile' && (
           <ProfilePage

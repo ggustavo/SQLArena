@@ -1,5 +1,5 @@
 import React from 'react';
-import { CheckCircle2, XCircle, AlertTriangle, Clock, Layers, Cpu, Server, Check, ArrowRight } from 'lucide-react';
+import { CheckCircle2, XCircle, AlertTriangle, Clock, Layers, Server, Check, ArrowRight } from 'lucide-react';
 
 export default function ResultPanel({ pollStage, result, error, isRunning }) {
   return (
@@ -15,12 +15,6 @@ export default function ResultPanel({ pollStage, result, error, isRunning }) {
             <div className="flex items-center gap-1.5 text-xs text-slate-400">
               <Clock className="w-3.5 h-3.5 text-indigo-400" />
               <span>Tempo: <strong className="text-slate-200">{result.executionTimeMs}ms</strong></span>
-            </div>
-          )}
-          {result?.cpuPercent !== undefined && result?.cpuPercent !== null && (
-            <div className="flex items-center gap-1.5 text-xs text-slate-400">
-              <Cpu className="w-3.5 h-3.5 text-emerald-400" />
-              <span>CPU: <strong className="text-slate-200">{result.cpuPercent}%</strong></span>
             </div>
           )}
         </div>

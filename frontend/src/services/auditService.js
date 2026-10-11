@@ -63,3 +63,20 @@ export async function logCrudAction({ actionType, entityId, details, userId = 's
 
   return newLog;
 }
+
+/**
+ * Consulta os últimos registros de submissões salvos no Amazon DynamoDB (sqlarena-submissions-log)
+ * com métricas operacionais como percentual de CPU e tempo de execução da sandbox.
+ */
+export async function getDynamoSubmissionLogs(limit = 30) {
+  const response = await api.get('/audit/dynamodb/submissions', { params: { limit } });
+  return response.data;
+}
+
+/**
+ * Consulta os últimos registros de ações de CRUD salvos no Amazon DynamoDB (sqlarena-crud-actions-log).
+ */
+export async function getDynamoCrudLogs(limit = 30) {
+  const response = await api.get('/audit/dynamodb/crud', { params: { limit } });
+  return response.data;
+}

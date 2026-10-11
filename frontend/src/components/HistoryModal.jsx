@@ -9,7 +9,6 @@ import {
   Loader2,
   Clock,
   Zap,
-  Cpu,
   Copy,
   Check,
   RotateCcw,
@@ -317,12 +316,6 @@ export default function HistoryModal({
                         <span className="flex items-center gap-1 px-2 py-0.5 rounded-md bg-slate-100 dark:bg-[#1a1d24] text-slate-600 dark:text-slate-400">
                           <Zap className="w-3 h-3 text-amber-500" />
                           {sub.executionTimeMs}ms
-                        </span>
-                      )}
-                      {sub.cpuPercent !== undefined && sub.cpuPercent !== null && (
-                        <span className="flex items-center gap-1 px-2 py-0.5 rounded-md bg-indigo-50 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300 border border-indigo-200/60 dark:border-indigo-800/60 font-semibold">
-                          <Cpu className="w-3 h-3 text-indigo-500" />
-                          CPU: {sub.cpuPercent}%
                         </span>
                       )}
                     </div>

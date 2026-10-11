@@ -100,3 +100,27 @@ def test_submission_rate_limit():
     except Exception:
         pass
     redis_client.delete_submission(sub_data["submissionId"])
+
+
+def test_dynamodb_audit_endpoints():
+    # Login como administrador / instrutor
+    login_res = client.post("/api/auth/login", json={
+        "email": "admin@sqlarena.com",
+        "password": "123456"
+    })
+    assert login_res.status_code == 200
+    token = login_res.json()["token"]
+    headers = {"Authorization": f"Bearer {token}"}
+
+    # 1. Consulta logs de submissões do DynamoDB
+    sub_logs_res = client.get("/api/audit/dynamodb/submissions?limit=30", headers=headers)
+    assert sub_logs_res.status_code == 200
+    sub_logs = sub_logs_res.json()
+    assert isinstance(sub_logs, list)
+
+    # 2. Consulta logs de ações de CRUD do DynamoDB
+    crud_logs_res = client.get("/api/audit/dynamodb/crud?limit=30", headers=headers)
+    assert crud_logs_res.status_code == 200
+    crud_logs = crud_logs_res.json()
+    assert isinstance(crud_logs, list)
+
