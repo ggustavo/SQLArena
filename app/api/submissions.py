@@ -86,16 +86,23 @@ def submit_query(
     # Verifica se a questão existe
     q = db.query(Question).filter(Question.id == qid).first()
     if not q:
+        db.close()
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Questão #{qid} não encontrada."
         )
 
     if q.status != "PUBLISHED":
+        db.close()
         raise HTTPException(
             status_code=403,
             detail="Esta questão precisa ser publicada pelo instrutor para que seja possível executá-la."
         )
+
+    q_title = payload.questionTitle or q.title
+    q_difficulty = payload.difficulty or q.difficulty
+    # Libera imediatamente a conexão do banco de dados antes do DynamoDB e SQS
+    db.close()
 
     submission_id = f"sub_{uuid.uuid4().hex[:12]}"
     now_iso = datetime.now(timezone.utc).isoformat()
@@ -105,8 +112,8 @@ def submit_query(
         "userId": user.id,
         "studentId": user.id,
         "questionId": qid,
-        "questionTitle": payload.questionTitle or q.title,
-        "difficulty": payload.difficulty or q.difficulty,
+        "questionTitle": q_title,
+        "difficulty": q_difficulty,
         "query": clean_query,
         "status": "PROCESSING",
         "outcome": "PROCESSING",

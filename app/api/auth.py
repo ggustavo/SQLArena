@@ -83,13 +83,17 @@ def login_response(user: User) -> LoginResponse:
 
 @router.post("/register", response_model=LoginResponse, status_code=status.HTTP_201_CREATED)
 def register(payload: RegisterRequest, db: Session = Depends(get_db)):
+    # 1. Hasheia a senha antes de tocar no banco de dados para não prender conexão do pool
+    pwd_hash = get_password_hash(payload.password)
     email = str(payload.email).strip().lower()
+
     if db.query(User).filter(func.lower(User.email) == email).first():
+        db.close()
         raise HTTPException(status_code=409, detail="E-mail já cadastrado.")
 
     user = User(
         id=f"user_{uuid.uuid4().hex}", name=payload.name, email=email,
-        password_hash=get_password_hash(payload.password), role="STUDENT",
+        password_hash=pwd_hash, role="STUDENT",
         score=0, solved_count=0, streak_days=0,
     )
     db.add(user)
@@ -97,30 +101,89 @@ def register(payload: RegisterRequest, db: Session = Depends(get_db)):
         db.commit()
     except IntegrityError:
         db.rollback()
+        db.close()
         raise HTTPException(status_code=409, detail="E-mail já cadastrado.")
     db.refresh(user)
+
+    # 2. Popula cache Redis imediatamente (elimina consultas de autenticação subsequentes ao PostgreSQL)
+    redis_client.set_cached_auth_user(user.id, {
+        "id": user.id,
+        "name": user.name,
+        "email": user.email,
+        "password_hash": user.password_hash,
+        "role": user.role,
+        "score": user.score or 0,
+        "solved_count": user.solved_count or 0,
+        "streak_days": user.streak_days or 0,
+        "avatar_url": getattr(user, "avatar_url", None),
+        "university": getattr(user, "university", None),
+        "city": getattr(user, "city", None),
+        "state": getattr(user, "state", None),
+        "country": getattr(user, "country", None),
+    }, ttl=300)
+
+    # Prepara resposta e extrai campos necessários
+    resp = login_response(user)
+    user_id = user.id
+    user_name = user.name
+    user_role = user.role
+
+    # 3. Libera o slot do banco IMEDIATAMENTE de volta ao pool do SQLAlchemy
+    db.close()
+
+    # 4. Invalidação de cache e auditoria externa no DynamoDB ocorrem SEM prender conexão do PostgreSQL
     redis_client.invalidate_ranking()
     try:
         DynamoDBManager().log_crud_action(
-            action_type="USER_REGISTER", entity="user", entity_id=user.id,
-            user_id=user.id, changed_data={"name": user.name, "email": user.email, "role": user.role},
+            action_type="USER_REGISTER", entity="user", entity_id=user_id,
+            user_id=user_id, changed_data={"name": user_name, "email": email, "role": user_role},
         )
     except Exception:
-        logger.exception("Falha ao auditar cadastro do usuário %s", user.id)
-    return login_response(user)
+        logger.exception("Falha ao auditar cadastro do usuário %s", user_id)
+    return resp
 
 @router.post("/login", response_model=LoginResponse)
 def login(payload: LoginRequest, db: Session = Depends(get_db)):
     clean_email = payload.email.strip().lower()
     user = db.query(User).filter(User.email == clean_email).first()
     
-    if not user or not verify_password(payload.password, user.password_hash):
+    if not user:
+        db.close()
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="E-mail ou senha incorretos."
         )
-    
-    return login_response(user)
+
+    user_hash = user.password_hash
+    resp = login_response(user)
+
+    # Cacheia no Redis para próximas requisições
+    redis_client.set_cached_auth_user(user.id, {
+        "id": user.id,
+        "name": user.name,
+        "email": user.email,
+        "password_hash": user.password_hash,
+        "role": user.role,
+        "score": user.score or 0,
+        "solved_count": user.solved_count or 0,
+        "streak_days": user.streak_days or 0,
+        "avatar_url": getattr(user, "avatar_url", None),
+        "university": getattr(user, "university", None),
+        "city": getattr(user, "city", None),
+        "state": getattr(user, "state", None),
+        "country": getattr(user, "country", None),
+    }, ttl=300)
+
+    # Libera a conexão do PostgreSQL imediatamente antes de rodar verificação CPU-heavy de bcrypt
+    db.close()
+
+    if not verify_password(payload.password, user_hash):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="E-mail ou senha incorretos."
+        )
+
+    return resp
 
 @router.get("/me", response_model=UserResponse)
 def get_me(user: User = Depends(get_current_user)):

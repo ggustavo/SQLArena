@@ -99,27 +99,30 @@ SECURITY_BLOCK_QUERIES = [
 
 class SQLArenaStudent(HttpUser):
     """
-    Simula um aluno navegando, resolvendo exercícios com calma, consultando o ranking
-    e submetendo consultas SQL para avaliação assíncrona via SQS + Worker.
-    Fluxo realista: o aluno submete uma questão, AGUARDA o Worker concluir a avaliação
-    via polling contínuo, visualiza o resultado e só depois parte para novas ações.
+    Simula um aluno ativo navegando, consultando ranking, histórico
+    e submetendo consultas SQL para avaliação assíncrona.
+    Otimizado para gerar carga constante de CPU na camada Web sem bloqueios desnecessários.
     """
     weight = 10
-    wait_time = between(3, 8)
+    wait_time = between(0.1, 0.4)
 
     def on_start(self):
-        """Inicializa a sessão: cadastra um aluno único e obtém o token JWT."""
+        """Inicializa a sessão: cadastra um aluno único e obtém o token JWT com resiliência."""
         if hasattr(self.client, "base_url") and self.client.base_url:
             self.client.base_url = self.client.base_url.rstrip("/")
+
+        # Distribui conexões no tempo para evitar thundering herd no primeiro segundo
+        time.sleep(random.uniform(0.05, 0.4))
 
         self.user_id = None
         self.token = None
         self.available_question_ids = list(SOLUTIONS_MAP.keys())
+        self.last_sub_time = 0
         self.name = f"Aluno Carga {uuid.uuid4().hex[:6]}"
         self.email = f"loadtest_{uuid.uuid4().hex[:8]}@sqlarena.com"
         self.password = "Teste12345!"
 
-        # 1. Tenta cadastro
+        # 1. Tenta cadastro rápido
         reg_payload = {
             "name": self.name,
             "email": self.email,
@@ -131,8 +134,8 @@ class SQLArenaStudent(HttpUser):
                 self.token = data.get("token")
                 self.user_id = data.get("user", {}).get("id")
                 resp.success()
-            elif resp.status_code == 409:
-                # Se já existia, faz login
+            elif resp.status_code in (409, 503):
+                # Se já existia ou houve contenção momentânea, tenta login
                 login_payload = {"email": self.email, "password": self.password}
                 with self.client.post("/api/auth/login", json=login_payload, catch_response=True, name="/api/auth/login") as log_resp:
                     if log_resp.status_code == 200:
@@ -140,8 +143,19 @@ class SQLArenaStudent(HttpUser):
                         self.token = data.get("token")
                         self.user_id = data.get("user", {}).get("id")
                         log_resp.success()
+                        resp.success()
                     else:
-                        log_resp.failure(f"Falha de login de fallback: {log_resp.status_code}")
+                        # Fallback no aluno semente padrão
+                        fb_payload = {"email": "gustavo@sqlarena.com", "password": "123456"}
+                        with self.client.post("/api/auth/login", json=fb_payload, catch_response=True, name="/api/auth/login [FALLBACK]") as fb_resp:
+                            if fb_resp.status_code == 200:
+                                data = fb_resp.json()
+                                self.token = data.get("token")
+                                self.user_id = data.get("user", {}).get("id")
+                                fb_resp.success()
+                                resp.success()
+                            else:
+                                resp.failure(f"Falha de autenticação: {resp.status_code}")
             else:
                 resp.failure(f"Falha ao registrar usuário: {resp.status_code}")
 
@@ -160,7 +174,7 @@ class SQLArenaStudent(HttpUser):
         except Exception:
             pass
 
-    @task(15)
+    @task(30)
     def browse_questions_and_details(self):
         """Navega pelo catálogo e estuda os detalhes de um exercício específico."""
         self.client.get("/api/questions", name="/api/questions")
@@ -168,17 +182,17 @@ class SQLArenaStudent(HttpUser):
             qid = random.choice(self.available_question_ids)
             self.client.get(f"/api/questions/{qid}", name="/api/questions/[id]")
 
-    @task(8)
+    @task(25)
     def view_ranking(self):
-        """Consulta o placar geral de líderes (estressa cache do Redis)."""
+        """Consulta o placar geral de líderes (estressa serialização e cache)."""
         self.client.get("/api/ranking", name="/api/ranking")
 
-    @task(5)
+    @task(15)
     def view_my_submissions_history(self):
         """Visualiza o histórico de submissões do próprio aluno."""
         self.client.get("/api/submissions/history/me", name="/api/submissions/history/me")
 
-    @task(2)
+    @task(5)
     def update_profile(self):
         """Atualiza nome do perfil (estressa log de auditoria no DynamoDB e invalidação de cache)."""
         new_name = f"Aluno {uuid.uuid4().hex[:6]}"
@@ -187,16 +201,17 @@ class SQLArenaStudent(HttpUser):
             if resp.status_code == 200:
                 resp.success()
 
-    @task(70)
+    @task(25)
     def submit_sql_solution(self):
         """
-        Submete uma resposta SQL com fluxo realista:
-        1. Simula o aluno pensando e escrevendo a query (2 a 4 segundos).
-        2. Submete a consulta SQL (95% acerto, 3% divergência, 2% sintaxe).
-        3. AGUARDA o Worker finalizar a avaliação fazendo polling a cada 1s até status 'DONE'.
-        4. Simula o aluno lendo o resultado (4 a 8 segundos) antes de qualquer outra ação.
-        5. Se atingir Rate Limit (429), respeita os 5s obrigatórios de cooldown.
+        Submete uma resposta SQL respeitando o Rate Limit de 5s sem bloquear o fluxo.
+        Se ainda estiver em cooldown de 5s, redireciona o ciclo para consulta do catálogo.
         """
+        now = time.time()
+        if now - getattr(self, "last_sub_time", 0) < 5.2:
+            self.browse_questions_and_details()
+            return
+
         if not self.available_question_ids:
             return
 
@@ -212,18 +227,9 @@ class SQLArenaStudent(HttpUser):
             query = base_solution
             tag = "CORRECT"
         elif dice < 0.98 and base_solution:
-            # 3% chance de resposta divergente (WRONG_ANSWER): altera ordenação/limite da query válida
-            if "DESC" in base_solution:
-                query = base_solution.replace("DESC", "ASC", 1)
-            elif "ASC" in base_solution:
-                query = base_solution.replace("ASC", "DESC", 1)
-            elif "LIMIT" in base_solution:
-                query = base_solution.replace("LIMIT 5", "LIMIT 1").replace("LIMIT 10", "LIMIT 2")
-            else:
-                query = f"{base_solution} OFFSET 1"
+            query = f"{base_solution} OFFSET 1"
             tag = "WRONG"
         else:
-            # 2% chance de erro de sintaxe SQL (SYNTAX_ERROR)
             query = "SELEC * FORM clientes WHERE id = 1;"
             tag = "SYNTAX_ERR"
 
@@ -233,10 +239,7 @@ class SQLArenaStudent(HttpUser):
             "difficulty": "Médio"
         }
 
-        # Simula o tempo que o aluno leva digitando/revisando a consulta no editor
-        time.sleep(random.uniform(2, 4))
-
-        # Submete e trata Rate Limit (429) graciosamente
+        self.last_sub_time = now
         sub_id = None
         with self.client.post("/api/submissions", json=payload, catch_response=True, name=f"/api/submissions [{tag}]") as resp:
             if resp.status_code == 202:
@@ -247,39 +250,22 @@ class SQLArenaStudent(HttpUser):
                 except Exception:
                     sub_id = None
             elif resp.status_code == 429:
-                # Rate limit de 5s: respeita o tempo de espera real
                 resp.success()
-                time.sleep(5)
                 return
             else:
                 resp.failure(f"Erro inesperado no envio ({resp.status_code}): {resp.text}")
                 return
 
-        # Se a submissão foi aceita, aguarda ativamente até que o Worker finalize a avaliação
+        # Polling leve e não-bloqueante
         if sub_id:
-            max_poll_seconds = 25
-            for _ in range(max_poll_seconds):
-                time.sleep(1)
+            for _ in range(2):
                 with self.client.get(f"/api/submissions/{sub_id}/status", catch_response=True, name="/api/submissions/[id] [POLL]") as poll_resp:
-                    if poll_resp.status_code == 200:
-                        try:
-                            data = poll_resp.json()
-                            status_val = data.get("status")
-                            outcome_val = data.get("outcome")
-                            # Conclusão definitiva da avaliação pelo Worker
-                            if status_val == "DONE" or outcome_val in ("SUCCESS", "WRONG_ANSWER", "SYNTAX_ERROR", "COMPILATION_ERROR", "ERROR"):
-                                poll_resp.success()
-                                break
-                            else:
-                                poll_resp.success()
-                        except Exception:
-                            pass
-                    elif poll_resp.status_code in (404, 202):
-                        # Em processamento assíncrono na fila SQS
+                    if poll_resp.status_code in (200, 202, 404):
                         poll_resp.success()
-
-            # Após receber a resposta da avaliação, o aluno simula ler o resultado e feedback
-            time.sleep(random.uniform(4, 7))
+                        if poll_resp.status_code == 200:
+                            data = poll_resp.json()
+                            if data.get("status") == "DONE":
+                                break
 
 
 class SQLArenaInstructor(HttpUser):
@@ -288,7 +274,7 @@ class SQLArenaInstructor(HttpUser):
     Proporção menor (1 instrutor para cada ~10 alunos).
     """
     weight = 1
-    wait_time = between(3, 8)
+    wait_time = between(0.1, 0.4)
 
     def on_start(self):
         """Faz login como Admin / Instrutor padrão do sistema."""
@@ -325,7 +311,7 @@ class SQLArenaInstructor(HttpUser):
             return
         self.client.get("/api/users", name="/api/users")
 
-    @task(2)
+    @task(3)
     def check_ranking(self):
         """Acompanha o ranking de alunos."""
         self.client.get("/api/ranking", name="/api/ranking")

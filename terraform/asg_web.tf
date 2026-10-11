@@ -48,9 +48,9 @@ DYNAMO_SUBMISSIONS_TABLE=${aws_dynamodb_table.submissions_log.name}
 DYNAMO_CRUD_TABLE_NAME=${aws_dynamodb_table.crud_actions_log.name}
 SQS_QUEUE_NAME=${aws_sqs_queue.submissions_queue.name}
 SQS_DLQ_NAME=${aws_sqs_queue.submissions_dlq.name}
-DB_POOL_SIZE=3
-DB_MAX_OVERFLOW=2
-DB_POOL_TIMEOUT=5
+DB_POOL_SIZE=5
+DB_MAX_OVERFLOW=5
+DB_POOL_TIMEOUT=15
 EOT
 
     # Atualiza codigo do repositorio na Golden AMI para garantir ultimas correcoes
