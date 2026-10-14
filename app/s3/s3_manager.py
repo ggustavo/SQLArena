@@ -336,7 +336,26 @@ class S3Manager:
                 raise RuntimeError(f"Falha parcial ao excluir arquivos da questão #{question_id}.")
             deleted_count = len(response.get("Deleted", []))
             logger.info(f"Removidos {deleted_count} arquivos da questão #{question_id} do S3.")
+
+            # Limpeza preventiva de diretório local caso esteja rodando sob ministack/localstack
+            self._cleanup_local_ministack_dir(question_id)
+
             return deleted_count
         except ClientError as e:
             logger.error(f"Erro ao remover arquivos da questão #{question_id}: {e}")
             raise
+
+    def _cleanup_local_ministack_dir(self, question_id: Union[int, str]) -> None:
+        """Remove diretórios vazios no ministack local para manter o sistema de arquivos limpo."""
+        try:
+            for base_path in [
+                Path("ministack/data/s3"),
+                Path(__file__).resolve().parent.parent.parent / "ministack" / "data" / "s3",
+            ]:
+                if base_path.exists():
+                    for target_dir in base_path.glob(f"**/questions/{question_id}"):
+                        if target_dir.is_dir() and not any(target_dir.iterdir()):
+                            target_dir.rmdir()
+                            logger.info(f"Diretório local vazio removido: {target_dir}")
+        except Exception as err:
+            logger.debug(f"Aviso ao limpar pasta local do ministack: {err}")
