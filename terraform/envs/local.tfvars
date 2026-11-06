@@ -1,31 +1,14 @@
-# Variáveis para execução com Ministack Local
-project_name   = "sqlarena"
-environment    = "local"
-is_local       = true
-aws_region     = "us-east-1"
-aws_access_key = "test"
-aws_secret_key = "test"
-local_endpoint = "http://127.0.0.1:4566"
+# ==============================================================================
+# AMBIENTE LOCAL: Cria apenas as tabelas do DynamoDB no Ministack local (Porta 4566)
+# ==============================================================================
+project_name             = "sqlarena"
+environment              = "local"
+deploy_mode              = "local"
+is_local                 = true
+aws_region               = "us-east-1"
+aws_access_key           = "test"
+aws_secret_key           = "test"
+local_endpoint           = "http://127.0.0.1:4566"
 
-# RDS
-db_name        = "app_db"
-db_username    = "postgres"
-db_password    = "postgrespassword"
-
-# EC2 (Máquina virtual limpa)
-ec2_instance_type = "t3.micro"
-ec2_ami           = "ami-00000001"
-app_port          = 8000
-
-# SQS
-sqs_queue_name    = "sqlarena-submissions-queue"
-
-# S3
-s3_bucket_name    = "sqlarena-questions-bucket"
-
-# DynamoDB
-dynamodb_table_name = "sqlarena-submissions-log"
+dynamodb_table_name      = "sqlarena-submissions-log"
 dynamodb_crud_table_name = "sqlarena-crud-actions-log"
-
-
-

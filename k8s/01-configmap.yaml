@@ -1,0 +1,46 @@
+# ==============================================================================
+# 01 - ConfigMap: Variáveis de Ambiente Não-Sensíveis do SQLArena no Kubernetes
+# ==============================================================================
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: sqlarena-config
+  labels:
+    app: sqlarena
+data:
+  ENVIRONMENT: "production"
+  APP_PORT: "8000"
+  ALGORITHM: "HS256"
+  ACCESS_TOKEN_EXPIRE_MINUTES: "10080"
+
+  # 1. AWS DynamoDB (Serviço Gerenciado na AWS)
+  AWS_REGION: "us-east-1"
+  DYNAMODB_ENDPOINT_URL: ""
+  DYNAMODB_TABLE_NAME: "sqlarena-submissions-log"
+  DYNAMODB_CRUD_TABLE_NAME: "sqlarena-crud-actions-log"
+  DYNAMO_SUBMISSIONS_TABLE: "sqlarena-submissions-log"
+  DYNAMO_CRUD_TABLE: "sqlarena-crud-actions-log"
+
+  # 2. PostgreSQL Principal (Service ClusterIP substituindo o RDS)
+  RDS_HOST: "postgres-service"
+  RDS_PORT: "5432"
+  RDS_DB_NAME: "app_db"
+
+  # 3. Redis Cache & Rate Limit (Service ClusterIP substituindo o ElastiCache)
+  REDIS_HOST: "redis-service"
+  REDIS_PORT: "6379"
+  REDIS_URL: "redis://redis-service:6379/0"
+
+  # 4. MinIO Object Storage (Service ClusterIP substituindo o Amazon S3)
+  MINIO_ENDPOINT: "http://minio-service:9000"
+  S3_BUCKET_NAME: "sqlarena-questions-bucket"
+
+  # 5. Apache Kafka (Service ClusterIP substituindo o Amazon SQS)
+  QUEUE_BACKEND: "kafka"
+  KAFKA_BOOTSTRAP_SERVERS: "kafka-service:9092"
+  KAFKA_TOPIC_NAME: "sqlarena-submissions-queue"
+  KAFKA_DLQ_TOPIC_NAME: "sqlarena-submissions-queue-dlq"
+  KAFKA_CONSUMER_GROUP: "sqlarena-workers-group"
+
+  # Comunicação Interna Worker Pod -> Web Pod via Service ClusterIP
+  BACKEND_INTERNAL_URL: "http://sqlarena-web-clusterip:8000"

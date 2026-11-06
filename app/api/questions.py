@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 from app.database.session import get_db
 from app.database.models import Question, Category, User, UserSolvedQuestion
 from app.api.deps import get_optional_current_user, require_instructor
-from app.s3.s3_manager import S3Manager
+from app.minio.minio_manager import MinioManager
 from app.dynamodb.dynamo_manager import DynamoDBManager
 from app.cache.redis_client import redis_client
 from app.database.validator import QuestionValidator, QuestionValidationError
@@ -15,7 +15,7 @@ from app.database.validator import QuestionValidator, QuestionValidationError
 router = APIRouter(prefix="/questions", tags=["Questões"])
 logger = logging.getLogger(__name__)
 
-s3_manager = S3Manager()
+minio_manager = MinioManager()
 dynamo_manager = DynamoDBManager()
 
 class QuestionCreateRequest(BaseModel):
@@ -233,7 +233,7 @@ def _perform_create_question(
     # 4. Salva scripts no S3
     question_id = new_q.id
     try:
-        s3_manager.upload_question_sql_files(
+        minio_manager.upload_question_sql_files(
             question_id=question_id,
             schema_sql=schema_sql or "-- Sem schema\n",
             data_sql=data_sql or "-- Sem dados\n",
@@ -243,7 +243,7 @@ def _perform_create_question(
     except Exception:
         db.rollback()
         logger.exception("Falha ao persistir questão #%s", question_id)
-        for cleanup in (s3_manager.delete_question_files, QuestionValidator.drop_question_schema):
+        for cleanup in (minio_manager.delete_question_files, QuestionValidator.drop_question_schema):
             try:
                 cleanup(question_id)
             except Exception:
@@ -384,7 +384,7 @@ def delete_question(
     db.commit()
     redis_client.invalidate_questions_cache(question_id)
     try:
-        s3_manager.delete_question_files(question_id)
+        minio_manager.delete_question_files(question_id)
         QuestionValidator.drop_question_schema(question_id)
         db.query(UserSolvedQuestion).filter_by(question_id=question_id).delete(synchronize_session=False)
         db.delete(q)

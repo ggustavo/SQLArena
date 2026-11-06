@@ -1,0 +1,371 @@
+"""
+Módulo gerenciador de Armazenamento de Objetos MinIO (compatível com API S3).
+Substitui o Amazon S3 no SQLArena utilizando o servidor MinIO em Docker/Kubernetes.
+
+Gerencia os scripts SQL de cada questão e avatares de usuários:
+- questions/{question_id}/schema.sql (DDL)
+- questions/{question_id}/data.sql (DML de carga inicial)
+- questions/{question_id}/answer.sql (Consulta gabarito canônica com ORDER BY)
+- avatars/{user_id}.png (Avatar redimensionado do perfil)
+
+Todos os dados das questões residem como comandos SQL puros, sem arquivos CSV externos.
+"""
+
+import logging
+import os
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Union
+import boto3
+from botocore.client import Config
+from botocore.exceptions import ClientError
+from dotenv import load_dotenv
+
+# Carrega variáveis do arquivo central app/.env de forma confiável
+_env_path = Path(__file__).resolve().parent.parent / ".env"
+if _env_path.exists():
+    load_dotenv(dotenv_path=_env_path)
+else:
+    load_dotenv()  # Fallback para o diretório atual de execução
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+logger = logging.getLogger("MinioManager")
+
+
+class MinioManager:
+    """Gerenciador para operações em buckets e objetos no MinIO no SQLArena."""
+
+    def __init__(
+        self,
+        bucket_name: Optional[str] = None,
+        endpoint_url: Optional[str] = None,
+        region_name: Optional[str] = None,
+        access_key: Optional[str] = None,
+        secret_key: Optional[str] = None,
+    ):
+        """
+        Inicializa o cliente MinIO.
+        Prioriza as variáveis específicas do MinIO (MINIO_ENDPOINT, MINIO_ACCESS_KEY, MINIO_SECRET_KEY)
+        para não conflitar com as credenciais AWS reais usadas pelo DynamoDB.
+        """
+        self.bucket_name = (
+            bucket_name
+            or os.getenv("MINIO_BUCKET_NAME")
+            or os.getenv("S3_BUCKET_NAME")
+            or "sqlarena-questions-bucket"
+        )
+        self.region_name = region_name or os.getenv("AWS_REGION", "us-east-1")
+
+        # Resolução de endpoint: prioriza MINIO_ENDPOINT -> S3_ENDPOINT_URL -> AWS_ENDPOINT_URL -> http://127.0.0.1:9000
+        raw_endpoint = (
+            endpoint_url
+            if endpoint_url is not None
+            else (
+                os.getenv("MINIO_ENDPOINT")
+                or os.getenv("S3_ENDPOINT_URL")
+                or os.getenv("AWS_ENDPOINT_URL")
+                or "http://127.0.0.1:9000"
+            )
+        )
+        self.endpoint_url = raw_endpoint.strip() if raw_endpoint and raw_endpoint.strip() else None
+
+        # Credenciais do MinIO
+        raw_access_key = (
+            access_key
+            or os.getenv("MINIO_ACCESS_KEY")
+            or os.getenv("MINIO_ROOT_USER")
+            or os.getenv("S3_ACCESS_KEY")
+            or os.getenv("AWS_ACCESS_KEY_ID")
+            or "minioadmin"
+        )
+        raw_secret_key = (
+            secret_key
+            or os.getenv("MINIO_SECRET_KEY")
+            or os.getenv("MINIO_ROOT_PASSWORD")
+            or os.getenv("S3_SECRET_KEY")
+            or os.getenv("AWS_SECRET_ACCESS_KEY")
+            or "minioadmin123"
+        )
+
+        self.access_key = raw_access_key.strip() if raw_access_key and raw_access_key.strip() else "minioadmin"
+        self.secret_key = raw_secret_key.strip() if raw_secret_key and raw_secret_key.strip() else "minioadmin123"
+
+        client_kwargs: Dict[str, Any] = {
+            "region_name": self.region_name,
+            "aws_access_key_id": self.access_key,
+            "aws_secret_access_key": self.secret_key,
+            # Path-style addressing e assinatura v4 são mandatórios para MinIO
+            "config": Config(
+                s3={"addressing_style": "path"},
+                signature_version="s3v4",
+                connect_timeout=5,
+                read_timeout=10,
+                retries={"max_attempts": 3},
+            ),
+        }
+
+        if self.endpoint_url:
+            client_kwargs["endpoint_url"] = self.endpoint_url
+
+        self.s3 = boto3.client("s3", **client_kwargs)
+
+    # ----------------------------------------------------------------------
+    # Operações de Bucket
+    # ----------------------------------------------------------------------
+
+    def ensure_bucket_exists(self) -> bool:
+        """
+        Verifica se o bucket alvo existe no MinIO. Caso não exista, cria-o automaticamente.
+        """
+        try:
+            self.s3.head_bucket(Bucket=self.bucket_name)
+            logger.info(f"Bucket MinIO '{self.bucket_name}' já existe e está acessível em {self.endpoint_url}.")
+            return True
+        except ClientError as e:
+            error_code = str(e.response.get("Error", {}).get("Code", ""))
+            if error_code in ("404", "NoSuchBucket", "400", "403"):
+                logger.info(f"Bucket '{self.bucket_name}' não existe no MinIO. Criando...")
+                try:
+                    self.s3.create_bucket(Bucket=self.bucket_name)
+                    logger.info(f"Bucket MinIO '{self.bucket_name}' criado com sucesso.")
+                    return True
+                except ClientError as create_err:
+                    err_c = str(create_err.response.get("Error", {}).get("Code", ""))
+                    if err_c in ("BucketAlreadyOwnedByYou", "BucketAlreadyExists"):
+                        return True
+                    logger.error(f"Erro ao criar bucket '{self.bucket_name}' no MinIO: {create_err}")
+                    raise
+            else:
+                logger.error(f"Erro ao verificar bucket '{self.bucket_name}': {e}")
+                raise
+
+    # ----------------------------------------------------------------------
+    # Operações Básicas com Objetos
+    # ----------------------------------------------------------------------
+
+    def upload_file(
+        self,
+        key: str,
+        content_or_path: Union[str, bytes, Path],
+        content_type: str = "text/plain; charset=utf-8",
+    ) -> bool:
+        """
+        Faz upload de conteúdo (string, bytes ou caminho de arquivo local) para o MinIO.
+        """
+        key = key.lstrip("/")
+        try:
+            is_local_file = False
+            if isinstance(content_or_path, Path):
+                is_local_file = content_or_path.is_file()
+            elif isinstance(content_or_path, str) and "\n" not in content_or_path:
+                try:
+                    is_local_file = Path(content_or_path).is_file()
+                except OSError:
+                    is_local_file = False
+
+            if is_local_file:
+                path = Path(content_or_path)
+                with open(path, "rb") as f:
+                    self.s3.put_object(
+                        Bucket=self.bucket_name,
+                        Key=key,
+                        Body=f.read(),
+                        ContentType=content_type,
+                    )
+            elif isinstance(content_or_path, str):
+                self.s3.put_object(
+                    Bucket=self.bucket_name,
+                    Key=key,
+                    Body=content_or_path.encode("utf-8"),
+                    ContentType=content_type,
+                )
+            elif isinstance(content_or_path, bytes):
+                self.s3.put_object(
+                    Bucket=self.bucket_name,
+                    Key=key,
+                    Body=content_or_path,
+                    ContentType=content_type,
+                )
+            else:
+                raise ValueError("content_or_path deve ser str, bytes ou Path válido.")
+
+            logger.info(f"Upload concluído no MinIO: minio://{self.bucket_name}/{key}")
+            return True
+        except ClientError as e:
+            if e.response.get("Error", {}).get("Code") in ("NoSuchBucket", "404"):
+                self.ensure_bucket_exists()
+                return self.upload_file(key, content_or_path, content_type)
+            logger.error(f"Erro ao fazer upload para '{key}' no MinIO: {e}")
+            raise
+
+    def read_file_text(self, key: str, encoding: str = "utf-8") -> str:
+        """
+        Lê o conteúdo de um objeto de texto no MinIO diretamente para uma string.
+        """
+        key = key.lstrip("/")
+        try:
+            response = self.s3.get_object(Bucket=self.bucket_name, Key=key)
+            body_bytes: bytes = response["Body"].read()
+            return body_bytes.decode(encoding)
+        except ClientError as e:
+            logger.error(f"Erro ao ler objeto '{key}' do bucket '{self.bucket_name}': {e}")
+            raise
+
+    def read_file_bytes(self, key: str) -> bytes:
+        """
+        Lê o conteúdo bruto (bytes) de um objeto no MinIO.
+        """
+        key = key.lstrip("/")
+        try:
+            response = self.s3.get_object(Bucket=self.bucket_name, Key=key)
+            return response["Body"].read()
+        except ClientError as e:
+            logger.error(f"Erro ao ler bytes do objeto '{key}' do bucket '{self.bucket_name}': {e}")
+            raise
+
+    def download_file(self, key: str, target_path: Union[str, Path]) -> Path:
+        """
+        Baixa um objeto do MinIO para o sistema de arquivos local.
+        Cria pastas pai se necessário.
+        """
+        key = key.lstrip("/")
+        dest = Path(target_path)
+        dest.parent.mkdir(parents=True, exist_ok=True)
+
+        try:
+            self.s3.download_file(self.bucket_name, key, str(dest))
+            logger.info(f"Objeto '{key}' baixado com sucesso em '{dest}'.")
+            return dest
+        except ClientError as e:
+            logger.error(f"Erro ao baixar objeto '{key}' para '{target_path}': {e}")
+            raise
+
+    def file_exists(self, key: str) -> bool:
+        """Verifica se um objeto existe no bucket do MinIO."""
+        key = key.lstrip("/")
+        try:
+            self.s3.head_object(Bucket=self.bucket_name, Key=key)
+            return True
+        except ClientError as e:
+            if e.response.get("Error", {}).get("Code") in ("404", "NoSuchKey", "NoSuchBucket"):
+                return False
+            logger.error(f"Erro ao consultar objeto '{key}': {e}")
+            raise
+
+    def delete_file(self, key: str) -> bool:
+        """Remove um objeto do bucket do MinIO."""
+        key = key.lstrip("/")
+        try:
+            self.s3.delete_object(Bucket=self.bucket_name, Key=key)
+            logger.info(f"Objeto removido do MinIO: minio://{self.bucket_name}/{key}")
+            return True
+        except ClientError as e:
+            logger.error(f"Erro ao remover objeto '{key}': {e}")
+            return False
+
+    def list_files(self, prefix: str = "") -> List[str]:
+        """Lista as chaves de objetos que começam com o prefixo informado."""
+        prefix = prefix.lstrip("/")
+        try:
+            paginator = self.s3.get_paginator("list_objects_v2")
+            pages = paginator.paginate(Bucket=self.bucket_name, Prefix=prefix)
+
+            keys: List[str] = []
+            for page in pages:
+                for item in page.get("Contents", []):
+                    keys.append(item["Key"])
+            return keys
+        except ClientError as e:
+            logger.error(f"Erro ao listar objetos com prefixo '{prefix}': {e}")
+            raise
+
+    # ----------------------------------------------------------------------
+    # Operações de Domínio SQLArena (Questões: schema.sql, data.sql, answer.sql)
+    # ----------------------------------------------------------------------
+
+    @staticmethod
+    def _question_key_prefix(question_id: Union[int, str]) -> str:
+        """Gera o prefixo padronizado para os arquivos de uma questão no MinIO."""
+        return f"questions/{question_id}"
+
+    def upload_question_sql_files(
+        self,
+        question_id: Union[int, str],
+        schema_sql: Union[str, bytes, Path],
+        data_sql: Union[str, bytes, Path],
+        answer_sql: Union[str, bytes, Path],
+    ) -> Dict[str, str]:
+        """
+        Salva o trio de arquivos SQL puros de uma questão no MinIO:
+        1. schema.sql (DDL de tabelas e índices)
+        2. data.sql (DML de carga inicial)
+        3. answer.sql (Gabarito da consulta com ORDER BY obrigatório)
+        """
+        prefix = self._question_key_prefix(question_id)
+        keys = {
+            "schema": f"{prefix}/schema.sql",
+            "data": f"{prefix}/data.sql",
+            "answer": f"{prefix}/answer.sql",
+        }
+
+        self.upload_file(keys["schema"], schema_sql, content_type="text/x-sql; charset=utf-8")
+        self.upload_file(keys["data"], data_sql, content_type="text/x-sql; charset=utf-8")
+        self.upload_file(keys["answer"], answer_sql, content_type="text/x-sql; charset=utf-8")
+
+        logger.info(f"Scripts SQL da questão #{question_id} salvos no MinIO com sucesso.")
+        return keys
+
+    def get_question_sql_files(self, question_id: Union[int, str]) -> Dict[str, str]:
+        """
+        Recupera o conteúdo em texto dos 3 arquivos SQL de uma questão:
+        retorna dicionário {'schema': str, 'data': str, 'answer': str}.
+        """
+        prefix = self._question_key_prefix(question_id)
+        return {
+            "schema": self.read_file_text(f"{prefix}/schema.sql"),
+            "data": self.read_file_text(f"{prefix}/data.sql"),
+            "answer": self.read_file_text(f"{prefix}/answer.sql"),
+        }
+
+    def download_question_sql_files(
+        self,
+        question_id: Union[int, str],
+        target_dir: Union[str, Path],
+    ) -> Dict[str, Path]:
+        """
+        Baixa os 3 arquivos SQL de uma questão para uma pasta local (bootstrapping de workers).
+        """
+        prefix = self._question_key_prefix(question_id)
+        out_dir = Path(target_dir)
+        out_dir.mkdir(parents=True, exist_ok=True)
+
+        return {
+            "schema": self.download_file(f"{prefix}/schema.sql", out_dir / "schema.sql"),
+            "data": self.download_file(f"{prefix}/data.sql", out_dir / "data.sql"),
+            "answer": self.download_file(f"{prefix}/answer.sql", out_dir / "answer.sql"),
+        }
+
+    def delete_question_files(self, question_id: Union[int, str]) -> int:
+        """
+        Remove todos os arquivos associados a uma questão do MinIO (schema.sql, data.sql, answer.sql).
+        Retorna o número de arquivos removidos.
+        """
+        prefix = self._question_key_prefix(question_id) + "/"
+        files = self.list_files(prefix=prefix)
+        if not files:
+            logger.info(f"Nenhum arquivo encontrado para a questão #{question_id} no MinIO.")
+            return 0
+
+        delete_payload = [{"Key": k} for k in files]
+        try:
+            response = self.s3.delete_objects(
+                Bucket=self.bucket_name,
+                Delete={"Objects": delete_payload},
+            )
+            if response.get("Errors"):
+                raise RuntimeError(f"Falha parcial ao excluir arquivos da questão #{question_id}.")
+            deleted_count = len(response.get("Deleted", []))
+            logger.info(f"Removidos {deleted_count} arquivos da questão #{question_id} do MinIO.")
+            return deleted_count
+        except ClientError as e:
+            logger.error(f"Erro ao remover arquivos da questão #{question_id}: {e}")
+            raise

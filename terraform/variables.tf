@@ -5,15 +5,26 @@ variable "project_name" {
 }
 
 variable "environment" {
-  description = "Ambiente de execução (local, dev, prod)"
+  description = "Ambiente de execução (local, ec2-compose, eks)"
   type        = string
-  default     = "local"
+  default     = "aws"
+}
+
+variable "deploy_mode" {
+  description = "Modo de implantação na AWS: 'eks' (Modo 1: 100% EKS + DynamoDB), 'ec2_compose' (Modo 2: 1 EC2 com Docker Compose + DynamoDB) ou 'local' (Apenas DynamoDB local)"
+  type        = string
+  default     = "ec2_compose"
+
+  validation {
+    condition     = contains(["eks", "ec2_compose", "local"], var.deploy_mode)
+    error_message = "O deploy_mode deve ser 'eks' (Modo 1), 'ec2_compose' (Modo 2) ou 'local'."
+  }
 }
 
 variable "is_local" {
-  description = "Booleano indicando se o deploy é no ministack local ou na AWS"
+  description = "Booleano indicando se o deploy é no ministack local ou na AWS real"
   type        = bool
-  default     = true
+  default     = false
 }
 
 variable "aws_region" {
@@ -25,14 +36,14 @@ variable "aws_region" {
 variable "aws_access_key" {
   description = "AWS Access Key"
   type        = string
-  default     = "test"
+  default     = ""
   sensitive   = true
 }
 
 variable "aws_secret_key" {
   description = "AWS Secret Key"
   type        = string
-  default     = "test"
+  default     = ""
   sensitive   = true
 }
 
@@ -44,107 +55,88 @@ variable "aws_session_token" {
 }
 
 variable "local_endpoint" {
-  description = "URL do ministack local (http://localhost:4566)"
+  description = "URL do ministack local (http://127.0.0.1:4566)"
   type        = string
-  default     = "http://localhost:4566"
+  default     = "http://127.0.0.1:4566"
 }
 
-# --- Configurações do Banco de Dados (RDS) ---
-variable "db_name" {
-  description = "Nome do banco de dados inicial no PostgreSQL"
-  type        = string
-  default     = "app_db"
-}
-
-variable "db_username" {
-  description = "Usuário master do PostgreSQL"
-  type        = string
-  default     = "postgres"
-}
-
-variable "db_password" {
-  description = "Senha do usuário master do PostgreSQL"
-  type        = string
-  default     = "postgrespassword"
-  sensitive   = true
-}
-
-# --- Configurações do EC2 (Servidor do Backend) ---
-variable "ec2_instance_type" {
-  description = "Tipo de instância EC2 (ex: t3.micro)"
-  type        = string
-  default     = "t3.micro"
-}
-
-variable "ec2_ami" {
-  description = "ID da imagem AMI padrão para a máquina virtual (Ubuntu 22.04 LTS base)"
-  type        = string
-  default     = "ami-00000001"
-}
-
-variable "web_ami" {
-  description = "ID da Golden AMI customizada para o Web (FastAPI + React). Se vazio, usa ec2_ami base."
-  type        = string
-  default     = ""
-}
-
-variable "worker_ami" {
-  description = "ID da Golden AMI customizada para o Worker (Postgres Sandbox + Python). Se vazio, usa ec2_ami base."
-  type        = string
-  default     = ""
-}
-
-variable "app_port" {
-  description = "Porta liberada no Security Group para a aplicação backend"
-  type        = number
-  default     = 8000
-}
-
-variable "iam_instance_profile_name" {
-  description = "Nome do IAM Instance Profile anexado aos nós EC2 (no AWS Academy usar 'LabInstanceProfile')"
-  type        = string
-  default     = "LabInstanceProfile"
-}
-
-# --- Configurações do SQS ---
-variable "sqs_queue_name" {
-  description = "Nome da fila SQS para processamento assíncrono"
-  type        = string
-  default     = "sqlarena-submissions-queue"
-}
-
-# --- Configurações do S3 ---
-variable "s3_bucket_name" {
-  description = "Nome do bucket S3 para armazenar os arquivos SQL das questoes"
-  type        = string
-  default     = "sqlarena-questions-bucket"
-}
-
-# --- Configurações do DynamoDB ---
+# --- Configurações do Amazon DynamoDB (Mantido na AWS em todos os modos) ---
 variable "dynamodb_table_name" {
-  description = "Nome da tabela DynamoDB para registro imutavel de submissoes"
+  description = "Nome da tabela DynamoDB para registro imutável de submissões"
   type        = string
   default     = "sqlarena-submissions-log"
 }
 
 variable "dynamodb_crud_table_name" {
-  description = "Nome da tabela DynamoDB para o log de acoes de CRUD (Requisito 5)"
+  description = "Nome da tabela DynamoDB para o log de ações de CRUD"
   type        = string
   default     = "sqlarena-crud-actions-log"
 }
 
-# --- Configurações de Deploy / Código ---
+# --- Configurações do Modo 1: Amazon EKS (Kubernetes) ---
+variable "eks_cluster_name" {
+  description = "Nome do cluster Amazon EKS (Modo 1)"
+  type        = string
+  default     = "sqlarena-eks"
+}
+
+variable "iam_role_name" {
+  description = "Nome da IAM Role para o EKS e Node Group (no AWS Academy usar 'LabRole')"
+  type        = string
+  default     = "LabRole"
+}
+
+variable "eks_node_instance_type" {
+  description = "Tipo de instância dos nós do EKS (Modo 1)"
+  type        = string
+  default     = "t3.medium"
+}
+
+variable "eks_desired_nodes" {
+  description = "Número desejado de nós no cluster EKS"
+  type        = number
+  default     = 2
+}
+
+variable "eks_min_nodes" {
+  description = "Número mínimo de nós no cluster EKS"
+  type        = number
+  default     = 1
+}
+
+variable "eks_max_nodes" {
+  description = "Número máximo de nós no cluster EKS"
+  type        = number
+  default     = 4
+}
+
+# --- Configurações do Modo 2: 1 EC2 com Docker e Docker Compose ---
+variable "ec2_instance_type" {
+  description = "Tipo de instância EC2 única para rodar Docker Compose (Modo 2)"
+  type        = string
+  default     = "t3.medium"
+}
+
+variable "ec2_ami" {
+  description = "ID da imagem AMI Ubuntu 22.04 LTS em us-east-1"
+  type        = string
+  default     = "ami-0c7217cdde317cfec"
+}
+
+variable "iam_instance_profile_name" {
+  description = "Nome do IAM Instance Profile anexado à EC2 (no AWS Academy usar 'LabInstanceProfile')"
+  type        = string
+  default     = "LabInstanceProfile"
+}
+
 variable "github_repo_url" {
-  description = "URL do repositório Git para clone automático no boot dos nós EC2"
+  description = "URL do repositório Git para clone automático no boot da EC2 (Modo 2)"
   type        = string
   default     = "https://github.com/ggustavo/SQLArena.git"
 }
 
 variable "github_branch" {
-  description = "Branch do Git para checkout no boot dos nós EC2"
+  description = "Branch do Git para checkout no boot da EC2 (Modo 2)"
   type        = string
   default     = "main"
 }
-
-
-

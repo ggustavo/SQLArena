@@ -5,7 +5,7 @@ from app.worker.main import SubmissionWorker
 
 
 def test_submission_worker_cpu_metrics():
-    with patch("app.worker.main.SQSQueueManager"), patch("app.worker.main.SandboxExecutor"):
+    with patch("app.worker.main.KafkaQueueManager"), patch("app.worker.main.SandboxExecutor"):
         worker = SubmissionWorker()
         metrics = worker.get_cpu_metrics()
         assert "cpu_percent" in metrics
@@ -16,7 +16,7 @@ def test_submission_worker_cpu_metrics():
 
 def test_submission_worker_procfs_fallback(tmp_path, monkeypatch):
     """Testa o cálculo nativo de CPU via /proc/stat do Linux."""
-    with patch("app.worker.main.SQSQueueManager"), patch("app.worker.main.SandboxExecutor"):
+    with patch("app.worker.main.KafkaQueueManager"), patch("app.worker.main.SandboxExecutor"):
         worker = SubmissionWorker()
 
         # Força desativação do psutil para testar o fallback de Linux puro

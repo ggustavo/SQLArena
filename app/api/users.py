@@ -16,7 +16,7 @@ from app.database.models import User
 from app.database.session import get_db
 from app.dynamodb.dynamo_manager import DynamoDBManager
 from app.cache.redis_client import redis_client
-from app.s3.s3_manager import S3Manager
+from app.minio.minio_manager import MinioManager
 
 router = APIRouter(prefix="/users", tags=["Usuários"])
 logger = logging.getLogger(__name__)
@@ -169,7 +169,7 @@ async def upload_avatar(
 
     s3_key = f"avatars/{user.id}.png"
     try:
-        S3Manager().upload_file(s3_key, processed_bytes, content_type="image/png")
+        MinioManager().upload_file(s3_key, processed_bytes, content_type="image/png")
     except Exception as s3_err:
         logger.exception("Falha ao salvar avatar no S3: %s", s3_err)
         raise HTTPException(status_code=500, detail="Falha ao salvar avatar no Amazon S3.")
@@ -206,7 +206,7 @@ def get_user_avatar(
     Recupera o arquivo binário do avatar do usuário armazenado no Amazon S3.
     """
     s3_key = f"avatars/{user_id}.png"
-    s3 = S3Manager()
+    s3 = MinioManager()
     try:
         if not s3.file_exists(s3_key):
             raise HTTPException(status_code=404, detail="Avatar não encontrado.")
@@ -237,7 +237,7 @@ def delete_my_avatar(
     """
     s3_key = f"avatars/{user.id}.png"
     try:
-        S3Manager().delete_file(s3_key)
+        MinioManager().delete_file(s3_key)
     except Exception as s3_err:
         logger.warning("Falha ao remover arquivo do avatar no S3: %s", s3_err)
 
@@ -268,7 +268,7 @@ def delete_my_account(
     """
     if user.avatar_url:
         try:
-            S3Manager().delete_file(f"avatars/{user.id}.png")
+            MinioManager().delete_file(f"avatars/{user.id}.png")
         except Exception:
             pass
 
@@ -354,7 +354,7 @@ def delete_user(
 
     if target.avatar_url:
         try:
-            S3Manager().delete_file(f"avatars/{target.id}.png")
+            MinioManager().delete_file(f"avatars/{target.id}.png")
         except Exception:
             pass
 

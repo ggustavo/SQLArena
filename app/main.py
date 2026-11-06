@@ -14,9 +14,9 @@ from sqlalchemy import text
 from sqlalchemy.exc import TimeoutError as SQLAlchemyTimeoutError, OperationalError
 from app.config import settings
 from app.database.session import engine, Base
-from app.s3.s3_manager import S3Manager
+from app.minio.minio_manager import MinioManager
 from app.dynamodb.dynamo_manager import DynamoDBManager
-from app.sqs.queue_manager import SQSQueueManager
+from app.kafka.kafka_manager import KafkaQueueManager
 from app.cache.redis_client import redis_client
 
 # Import routers
@@ -33,8 +33,8 @@ logger = logging.getLogger("SQLArenaApp")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    logger.info("Iniciando SQLArena Backend...")
-    # 1. Verifica/cria tabelas do RDS PostgreSQL
+    logger.info("Iniciando SQLArena Backend (PostgreSQL + MinIO + Kafka + Redis + AWS DynamoDB)...")
+    # 1. Verifica/cria tabelas do PostgreSQL Principal
     try:
         Base.metadata.create_all(bind=engine)
         try:
@@ -53,33 +53,33 @@ async def lifespan(app: FastAPI):
                         pass
         except Exception as mig_err:
             logger.debug("Migração opcional de colunas ignorada: %s", mig_err)
-        logger.info("[✓] Banco RDS PostgreSQL conectado com sucesso.")
+        logger.info("[✓] Banco PostgreSQL Principal conectado com sucesso.")
     except Exception as e:
-        logger.error(f"[!] Erro ao conectar no RDS PostgreSQL: {e}")
+        logger.error(f"[!] Erro ao conectar no PostgreSQL Principal: {e}")
 
-    # 2. Verifica bucket S3
+    # 2. Verifica bucket no MinIO
     try:
-        s3 = S3Manager()
-        s3.ensure_bucket_exists()
-        logger.info(f"[✓] Bucket S3 '{s3.bucket_name}' pronto.")
+        minio = MinioManager()
+        minio.ensure_bucket_exists()
+        logger.info(f"[✓] Bucket MinIO '{minio.bucket_name}' pronto.")
     except Exception as e:
-        logger.warning(f"[!] Aviso S3: {e}")
+        logger.warning(f"[!] Aviso MinIO: {e}")
 
-    # 3. Verifica tabelas DynamoDB
+    # 3. Verifica tabelas no AWS DynamoDB
     try:
         dyn = DynamoDBManager()
         dyn.ensure_tables_exist()
-        logger.info("[✓] Tabelas DynamoDB prontas.")
+        logger.info("[✓] Tabelas AWS DynamoDB prontas.")
     except Exception as e:
-        logger.warning(f"[!] Aviso DynamoDB: {e}")
+        logger.warning(f"[!] Aviso AWS DynamoDB: {e}")
 
-    # 4. Verifica filas SQS
+    # 4. Verifica tópicos no Apache Kafka
     try:
-        sqs = SQSQueueManager()
-        sqs.ensure_queues_exist()
-        logger.info(f"[✓] Fila SQS '{sqs.queue_name}' pronta.")
+        kafka = KafkaQueueManager()
+        kafka.ensure_queues_exist()
+        logger.info(f"[✓] Tópico Apache Kafka '{kafka.queue_name}' pronto.")
     except Exception as e:
-        logger.warning(f"[!] Aviso SQS: {e}")
+        logger.warning(f"[!] Aviso Apache Kafka: {e}")
 
     # 5. Verifica Redis
     if redis_client.ping():
@@ -93,7 +93,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="SQLArena API",
     description="API RESTful de backend do SQLArena - Ensino e Avaliação Automatizada de SQL",
-    version="1.0.0",
+    version="2.0.0",
     lifespan=lifespan
 )
 
@@ -124,6 +124,8 @@ app.add_middleware(
         "http://127.0.0.1:5173",
         "http://localhost:3000",
         "http://127.0.0.1:3000",
+        "http://localhost",
+        "http://127.0.0.1",
         "*"
     ],
     allow_credentials=True,
@@ -176,7 +178,7 @@ async def handle_db_operational_error(request: Request, exc: OperationalError):
         headers={"Retry-After": "2"}
     )
 
-# Endpoint de Health Check para o Application Load Balancer (ALB)
+# Endpoint de Health Check
 @app.get("/health", tags=["Health"])
 @app.get("/api/health", tags=["Health"])
 def health_check():
@@ -195,7 +197,7 @@ app.include_router(audit_router, prefix="/api")
 app.include_router(users_router, prefix="/api")
 app.include_router(ranking_router, prefix="/api")
 
-# Servir Frontend Compilado (Single Page Application no mesmo host)
+# Servir Frontend Compilado caso presente localmente
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 
@@ -207,10 +209,7 @@ if frontend_dist.exists():
 
     @app.get("/{full_path:path}", include_in_schema=False)
     async def serve_spa(full_path: str):
-        # Se for um arquivo existente em dist/ (ex: vite.svg, favicon), entrega o arquivo
         file_path = frontend_dist / full_path
         if full_path and file_path.exists() and file_path.is_file():
             return FileResponse(file_path)
-        # Qualquer outra rota da SPA entrega index.html
         return FileResponse(frontend_dist / "index.html")
-

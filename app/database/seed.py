@@ -1,3 +1,4 @@
+import argparse
 import json
 import logging
 import os
@@ -14,9 +15,9 @@ from app.config import settings
 from app.database.session import Base, engine, SessionLocal
 from app.database.models import User, Category, Question, question_categories, UserSolvedQuestion
 from app.auth.security import get_password_hash
-from app.s3.s3_manager import S3Manager
+from app.minio.minio_manager import MinioManager
 from app.dynamodb.dynamo_manager import DynamoDBManager
-from app.sqs.queue_manager import SQSQueueManager
+from app.kafka.kafka_manager import KafkaQueueManager
 from app.cache.redis_client import redis_client
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -75,20 +76,40 @@ def generate_data_sql(sample_tables: list) -> str:
             
     return "\n\n".join(statements) + "\n"
 
-def seed_database():
-    logger.info("Iniciando criação e seed do banco de dados relacional RDS...")
+def seed_database(only_if_empty: bool = False):
+    logger.info("Iniciando verificação e seed do banco PostgreSQL, MinIO, Kafka e DynamoDB...")
     
-    # 1. Cria tabelas
+    # 1. Cria tabelas no PostgreSQL
     Base.metadata.create_all(bind=engine)
-    logger.info("[✓] Tabelas do PostgreSQL RDS verificadas/criadas.")
+    logger.info("[✓] Tabelas do PostgreSQL verificadas/criadas.")
 
-    # 2. Inicializa gerenciador S3
-    s3_manager = S3Manager()
-    s3_manager.ensure_bucket_exists()
-    logger.info("[✓] Bucket S3 verificado.")
+    # 2. Inicializa gerenciador MinIO
+    minio_manager = MinioManager()
+    minio_manager.ensure_bucket_exists()
+    logger.info("[✓] Bucket MinIO verificado.")
 
     db: Session = SessionLocal()
     try:
+        # Se only_if_empty=True (ex: boot de Pod no Kubernetes ou restart de container),
+        # verifica se as questões já estão no Postgres e no MinIO para não zerar progresso existente
+        if only_if_empty:
+            existing_q_count = db.query(Question).count()
+            minio_ready = minio_manager.file_exists("questions/1/schema.sql")
+            if existing_q_count >= 21 and minio_ready:
+                logger.info(
+                    f"[✓] Ambiente já inicializado ({existing_q_count} questões no Postgres e arquivos no MinIO). "
+                    "Preservando dados existentes."
+                )
+                try:
+                    DynamoDBManager().ensure_tables_exist()
+                except Exception as e:
+                    logger.warning(f"Aviso ao verificar tabelas DynamoDB: {e}")
+                try:
+                    KafkaQueueManager().ensure_queues_exist()
+                except Exception as e:
+                    logger.warning(f"Aviso ao verificar tópicos Kafka: {e}")
+                return
+
         # Garante coluna expected_hash caso a tabela já existisse
         try:
             db.execute(text("ALTER TABLE questions ADD COLUMN IF NOT EXISTS expected_hash VARCHAR(64);"))
@@ -226,15 +247,15 @@ def seed_database():
                 # Salva o Hash no Redis
                 redis_client.set_answer_hash(q_id, val_res["expected_hash"])
 
-                # Upload dos scripts SQL para o S3
-                s3_manager.upload_question_sql_files(
+                # Upload dos scripts SQL para o MinIO
+                minio_manager.upload_question_sql_files(
                     question_id=q_id,
                     schema_sql=schema_sql,
                     data_sql=data_sql,
                     answer_sql=answer_sql
                 )
 
-            logger.info(f"[✓] Todas as {len(questions_data)} questões foram validadas, geraram hash no RDS/Redis e subiram para o S3.")
+            logger.info(f"[✓] Todas as {len(questions_data)} questões foram validadas, geraram hash no Postgres/Redis e subiram para o MinIO.")
 
         # 6. Invalida caches do Redis para garantir frescor
         redis_client.invalidate_questions_cache()
@@ -252,12 +273,10 @@ def seed_database():
         try:
             dynamo = DynamoDBManager()
             dynamo.ensure_tables_exist()
-            # Limpa qualquer submissão residual para garantir ambiente 100% zerado
             with dynamo.table.batch_writer() as batch:
                 scan = dynamo.table.scan(ProjectionExpression="submission_id")
                 for item in scan.get("Items", []):
                     batch.delete_item(Key={"submission_id": item["submission_id"]})
-            # Limpa qualquer log de CRUD residual
             with dynamo.crud_table.batch_writer() as batch:
                 scan = dynamo.crud_table.scan(ProjectionExpression="action_id")
                 for item in scan.get("Items", []):
@@ -266,13 +285,13 @@ def seed_database():
         except Exception as e:
             logger.warning(f"Aviso ao inicializar/limpar DynamoDB no seed: {e}")
 
-        # 9. Garante filas SQS prontas
+        # 9. Garante tópicos Kafka prontos
         try:
-            sqs = SQSQueueManager()
-            sqs.ensure_queues_exist()
-            logger.info("[✓] Filas SQS verificadas/criadas com sucesso.")
+            kafka = KafkaQueueManager()
+            kafka.ensure_queues_exist()
+            logger.info("[✓] Tópicos Kafka verificados/criados com sucesso.")
         except Exception as e:
-            logger.warning(f"Aviso ao inicializar SQS no seed: {e}")
+            logger.warning(f"Aviso ao inicializar Kafka no seed: {e}")
 
     except Exception as e:
         db.rollback()
@@ -282,8 +301,15 @@ def seed_database():
         db.close()
 
     logger.info("============================================================")
-    logger.info("SEED DO BANCO RDS E DO S3 CONCLUÍDO COM SUCESSO!")
+    logger.info("SEED DO POSTGRESQL, MINIO, KAFKA E DYNAMODB CONCLUÍDO!")
     logger.info("============================================================")
 
 if __name__ == "__main__":
-    seed_database()
+    parser = argparse.ArgumentParser(description="Seed do banco de dados SQLArena")
+    parser.add_argument(
+        "--if-empty",
+        action="store_true",
+        help="Executa o seed completo apenas se o banco ou MinIO ainda estiverem vazios"
+    )
+    args = parser.parse_args()
+    seed_database(only_if_empty=args.if_empty)

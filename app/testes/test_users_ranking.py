@@ -49,7 +49,7 @@ def client(monkeypatch):
         def delete_file(self, key):
             s3_storage.pop(key, None)
             return True
-    monkeypatch.setattr("app.api.users.S3Manager", FakeS3)
+    monkeypatch.setattr("app.api.users.MinioManager", FakeS3)
 
     cache = {"value": None}
     monkeypatch.setattr("app.api.ranking.redis_client.get_ranking", lambda: cache["value"])
@@ -58,9 +58,9 @@ def client(monkeypatch):
     monkeypatch.setattr("app.api.users.redis_client.invalidate_ranking", lambda: cache.update(value=None))
 
     # Bypassa tentativas de conexão de rede externa no lifespan do FastAPI durante testes
-    monkeypatch.setattr("app.main.S3Manager.ensure_bucket_exists", lambda self: True)
+    monkeypatch.setattr("app.main.MinioManager.ensure_bucket_exists", lambda self: True)
     monkeypatch.setattr("app.main.DynamoDBManager.ensure_tables_exist", lambda self: True)
-    monkeypatch.setattr("app.main.SQSQueueManager.ensure_queues_exist", lambda self: True)
+    monkeypatch.setattr("app.main.KafkaQueueManager.ensure_queues_exist", lambda self: True)
 
     db = session_factory()
     db.add_all([

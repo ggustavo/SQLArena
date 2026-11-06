@@ -1,0 +1,65 @@
+# ==============================================================================
+# 04 - Redis Cache & Rate Limit (Substitui o Amazon ElastiCache)
+# Exposto internamente no cluster via Service ClusterIP (redis-service:6379).
+# ==============================================================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis
+  labels:
+    app: sqlarena
+    component: redis
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: sqlarena
+      component: redis
+  template:
+    metadata:
+      labels:
+        app: sqlarena
+        component: redis
+    spec:
+      containers:
+        - name: redis
+          image: redis:7-alpine
+          command: ["redis-server", "--appendonly", "yes"]
+          ports:
+            - containerPort: 6379
+              name: redis
+          readinessProbe:
+            exec:
+              command: ["redis-cli", "ping"]
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          livenessProbe:
+            exec:
+              command: ["redis-cli", "ping"]
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: "50m"
+              memory: "128Mi"
+            limits:
+              cpu: "250m"
+              memory: "256Mi"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis-service
+  labels:
+    app: sqlarena
+    component: redis
+spec:
+  type: ClusterIP
+  selector:
+    app: sqlarena
+    component: redis
+  ports:
+    - port: 6379
+      targetPort: 6379
+      protocol: TCP
+      name: redis

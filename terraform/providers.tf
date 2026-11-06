@@ -14,37 +14,27 @@ provider "aws" {
   secret_key = var.is_local ? "test" : (var.aws_secret_key != "test" && var.aws_secret_key != "" ? var.aws_secret_key : null)
   token      = var.is_local ? null : (var.aws_session_token != "" ? var.aws_session_token : null)
 
-  # Configurações para funcionamento transparente com o Ministack local
   skip_credentials_validation = var.is_local
   skip_requesting_account_id  = var.is_local
   skip_metadata_api_check     = var.is_local
   s3_use_path_style           = var.is_local
 
-  # Redirecionamento dinâmico dos endpoints para o Ministack quando local
   dynamic "endpoints" {
     for_each = var.is_local ? [1] : []
     content {
-      ec2         = var.local_endpoint
-      rds         = var.local_endpoint
-      elasticache = var.local_endpoint
-      sqs         = var.local_endpoint
-      ecs         = var.local_endpoint
-      ecr         = var.local_endpoint
-      iam         = var.local_endpoint
-      s3          = var.local_endpoint
-      dynamodb    = var.local_endpoint
-      elb         = var.local_endpoint
-      elbv2       = var.local_endpoint
-      autoscaling = var.local_endpoint
-      cloudwatch  = var.local_endpoint
+      ec2      = var.local_endpoint
+      dynamodb = var.local_endpoint
+      iam      = var.local_endpoint
+      eks      = var.local_endpoint
+      ecr      = var.local_endpoint
     }
-
   }
 
   default_tags {
     tags = {
       Project     = var.project_name
       Environment = var.environment
+      DeployMode  = var.deploy_mode
       ManagedBy   = "Terraform"
     }
   }

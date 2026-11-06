@@ -1,0 +1,126 @@
+# ==============================================================================
+# 05 - MinIO Object Storage (Substitui o Amazon S3)
+# Armazena os scripts SQL das questões (schema.sql, data.sql, answer.sql) e avatares.
+# - Service ClusterIP (minio-service:9000) para comunicação interna da API e Workers.
+# - Service NodePort (minio-console-nodeport:30901) para acesso ao Console Web.
+# ==============================================================================
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: minio-pvc
+  labels:
+    app: sqlarena
+    component: minio
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 5Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: minio
+  labels:
+    app: sqlarena
+    component: minio
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: sqlarena
+      component: minio
+  template:
+    metadata:
+      labels:
+        app: sqlarena
+        component: minio
+    spec:
+      containers:
+        - name: minio
+          image: elestio/minio:latest
+          args: ["server", "/data", "--console-address", ":9001"]
+          ports:
+            - containerPort: 9000
+              name: s3-api
+            - containerPort: 9001
+              name: console
+          env:
+            - name: MINIO_ROOT_USER
+              valueFrom:
+                secretKeyRef:
+                  name: sqlarena-secrets
+                  key: MINIO_ROOT_USER
+            - name: MINIO_ROOT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: sqlarena-secrets
+                  key: MINIO_ROOT_PASSWORD
+          volumeMounts:
+            - name: minio-storage
+              mountPath: /data
+          readinessProbe:
+            httpGet:
+              path: /minio/health/ready
+              port: 9000
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /minio/health/live
+              port: 9000
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "256Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
+      volumes:
+        - name: minio-storage
+          persistentVolumeClaim:
+            claimName: minio-pvc
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: minio-service
+  labels:
+    app: sqlarena
+    component: minio
+spec:
+  type: ClusterIP
+  selector:
+    app: sqlarena
+    component: minio
+  ports:
+    - name: s3-api
+      port: 9000
+      targetPort: 9000
+      protocol: TCP
+    - name: console
+      port: 9001
+      targetPort: 9001
+      protocol: TCP
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: minio-console-nodeport
+  labels:
+    app: sqlarena
+    component: minio
+spec:
+  type: NodePort
+  selector:
+    app: sqlarena
+    component: minio
+  ports:
+    - name: console
+      port: 9001
+      targetPort: 9001
+      nodePort: 30901
+      protocol: TCP

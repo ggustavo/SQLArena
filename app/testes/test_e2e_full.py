@@ -4,7 +4,7 @@ import pytest
 from fastapi.testclient import TestClient
 from app.main import app
 from app.worker.main import SubmissionWorker
-from app.sqs.queue_manager import SQSQueueManager
+from app.kafka.kafka_manager import KafkaQueueManager
 from app.cache.redis_client import redis_client
 from app.dynamodb.dynamo_manager import DynamoDBManager
 
@@ -53,7 +53,7 @@ def test_full_student_frontend_flow():
 
     # 4. Envio de submissão
     # Limpa mensagens antigas da fila e rate limit para o teste
-    sqs = SQSQueueManager()
+    sqs = KafkaQueueManager()
     while True:
         old_msgs = sqs.receive_messages(max_messages=10, wait_time_seconds=1)
         if not old_msgs:

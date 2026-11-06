@@ -19,7 +19,7 @@ if str(_project_root) not in sys.path:
     sys.path.insert(0, str(_project_root))
 
 from app.config import settings
-from app.sqs.queue_manager import SQSQueueManager
+from app.kafka.kafka_manager import KafkaQueueManager
 from app.worker.executor import SandboxExecutor
 
 logging.basicConfig(
@@ -32,16 +32,16 @@ logger = logging.getLogger("SubmissionWorker")
 class SubmissionWorker:
     """
     Consumidor de Submissões Desacoplado com Auditoria Operacional Completa:
-    - 100% isolado do RDS central e do ElastiCache Redis para avaliação.
-    - Executa a Sandbox no PostgreSQL local da própria máquina EC2.
+    - Consome mensagens do Apache Kafka (Consumer Group escalável no Kubernetes).
+    - 100% isolado do banco PostgreSQL principal e do Redis para avaliação.
+    - Executa a Sandbox no PostgreSQL local do próprio Pod/Container.
+    - Baixa scripts SQL sob demanda do MinIO (S3-compatible).
     - Rastreabilidade ponta a ponta com cronometragem granular de cada etapa.
-    - Notifica a conclusão via HTTP (ALB/Backend) para que o Backend atualize pontuações e caches.
-    - Captura métricas de consumo de CPU da máquina Linux para auditoria operacional.
-    - Painel de estatísticas de sessão e heartbeat de monitoramento.
+    - Notifica a conclusão via HTTP (Service ClusterIP/Backend) para atualização de XP e caches.
     """
 
     def __init__(self):
-        self.sqs = SQSQueueManager()
+        self.kafka = KafkaQueueManager()
         self.executor = SandboxExecutor()
         self.running = True
         self.start_time = time.time()
@@ -82,7 +82,7 @@ class SubmissionWorker:
 
     def get_cpu_metrics(self) -> dict:
         """
-        Captura o consumo de CPU da máquina Linux de forma não-bloqueante.
+        Captura o consumo de CPU da máquina Linux/Container de forma não-bloqueante.
         Retorna percentual de CPU e carga média do sistema (load average).
         """
         cpu_percent = None
@@ -133,16 +133,15 @@ class SubmissionWorker:
         """Imprime banner de inicialização e diagnóstico do Worker."""
         uptime_start = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
         sandbox_url = settings.SANDBOX_DATABASE_URL or settings.DATABASE_URL
-        # Mascara credenciais para exibição segura
         safe_db_url = re_mask_url(sandbox_url)
 
         logger.info("=" * 80)
-        logger.info("🚀 SQLArena Submission Worker Iniciado")
+        logger.info("🚀 SQLArena Submission Worker Iniciado (Kafka + MinIO + PG Sandbox)")
         logger.info("-" * 80)
         logger.info(f" • Início:               {uptime_start}")
-        logger.info(f" • Fila Amazon SQS:      {self.sqs.queue_name}")
-        logger.info(f" • URL da Fila SQS:      {self.sqs.queue_url}")
-        logger.info(f" • Bucket Amazon S3:     {settings.S3_BUCKET_NAME}")
+        logger.info(f" • Tópico Apache Kafka:  {self.kafka.queue_name}")
+        logger.info(f" • Broker Kafka URL:     {self.kafka.queue_url}")
+        logger.info(f" • Bucket MinIO:         {settings.S3_BUCKET_NAME}")
         logger.info(f" • PostgreSQL Sandbox:   {safe_db_url}")
         logger.info(f" • Callback Backend:     {settings.BACKEND_INTERNAL_URL}/api/submissions/callback")
         logger.info(f" • Timeout por Consulta: 3000 ms (3 segundos)")
@@ -151,7 +150,7 @@ class SubmissionWorker:
 
     def _notify_backend(self, payload: dict) -> tuple[bool, Optional[dict], float]:
         """
-        Envia o resultado da submissão para o Backend via HTTP (ALB/API).
+        Envia o resultado da submissão para o Backend via HTTP.
         Retorna (sucesso, dados_da_resposta, tempo_em_ms).
         """
         callback_url = f"{settings.BACKEND_INTERNAL_URL.rstrip('/')}/api/submissions/callback"
@@ -197,7 +196,7 @@ class SubmissionWorker:
                 return False, None, latency_ms
 
     def process_message(self, message: dict) -> bool:
-        """Processa uma mensagem de submissão da fila SQS com auditoria detalhada."""
+        """Processa uma mensagem de submissão do Kafka com auditoria detalhada."""
         pipeline_start = time.perf_counter()
         body_raw = message.get("Body", "{}")
         receipt_handle = message.get("ReceiptHandle")
@@ -206,29 +205,27 @@ class SubmissionWorker:
         try:
             payload = json.loads(body_raw)
         except Exception as e:
-            logger.error(f"❌ [SQS PAYLOAD INVÁLIDO] JSON corrompido: {body_raw[:200]} - Erro: {e}")
+            logger.error(f"❌ [KAFKA PAYLOAD INVÁLIDO] JSON corrompido: {body_raw[:200]} - Erro: {e}")
             if receipt_handle:
-                self.sqs.delete_message(receipt_handle)
+                self.kafka.delete_message(receipt_handle)
             return False
 
         submission_id = payload.get("submission_id", "sem-id")
         user_id = payload.get("user_id", "anônimo")
         question_id = payload.get("question_id", 0)
         query_sql = (payload.get("query") or "").strip()
-        timestamp_sqs = payload.get("timestamp", datetime.now(timezone.utc).isoformat())
 
-        # Formata snippet visual da consulta para o log de auditoria
         query_lines = query_sql.splitlines()
         query_preview = query_lines[0][:100] if query_lines else "(consulta vazia)"
         if len(query_lines) > 1:
             query_preview += f" ... (+{len(query_lines)-1} linhas)"
 
         logger.info("┌" + "─" * 78 + "┐")
-        logger.info(f"│ 📥 [SUBMISSÃO #{submission_id}] Aluno: {user_id} | Questão: #{question_id} | Msg SQS: {message_id[:16]}...")
+        logger.info(f"│ 📥 [SUBMISSÃO #{submission_id}] Aluno: {user_id} | Questão: #{question_id} | Msg Kafka: {message_id[:16]}...")
         logger.info(f"│ 📝 Consulta ({len(query_sql)} caracteres): {query_preview}")
         logger.info("├" + "─" * 78 + "┤")
 
-        # 1. Executa a query no PostgreSQL Local da máquina
+        # 1. Executa a query no PostgreSQL Sandbox local
         res = self.executor.execute_student_query(
             question_id=int(question_id),
             query=query_sql
@@ -253,12 +250,12 @@ class SubmissionWorker:
         else:
             self.stats["syntax_error"] += 1
 
-        # 2. Captura consumo de CPU da máquina Linux após execução
+        # 2. Captura consumo de CPU após execução
         cpu_info = self.get_cpu_metrics()
         cpu_pct = cpu_info.get("cpu_percent", 0.0)
         load_1m = cpu_info.get("load_1m")
 
-        # 3. Notifica o Backend via HTTP (ALB) com o resultado
+        # 3. Notifica o Backend via HTTP com o resultado
         callback_data = {
             "submissionId": submission_id,
             "userId": user_id,
@@ -276,16 +273,16 @@ class SubmissionWorker:
 
         notified, callback_res, cb_time_ms = self._notify_backend(callback_data)
 
-        # 4. Confirmação e descarte na fila SQS
-        sqs_del_ms = 0.0
+        # 4. Confirmação (Commit Offset) no Kafka
+        kafka_ack_ms = 0.0
         if receipt_handle and notified:
-            t_sqs = time.perf_counter()
-            self.sqs.delete_message(receipt_handle)
-            sqs_del_ms = round((time.perf_counter() - t_sqs) * 1000, 2)
-            logger.info(f"   [PASSO 6/6 - SQS ACK] ✓ Mensagem removida da fila SQS em {sqs_del_ms:.2f} ms.")
+            t_kafka = time.perf_counter()
+            self.kafka.delete_message(receipt_handle)
+            kafka_ack_ms = round((time.perf_counter() - t_kafka) * 1000, 2)
+            logger.info(f"   [PASSO 6/6 - KAFKA ACK] ✓ Offset confirmado no Kafka em {kafka_ack_ms:.2f} ms.")
         elif not notified:
             self.stats["notified_errors"] += 1
-            logger.warning(f"   [PASSO 6/6 - SQS RETRY] Mensagem MANTIDA na fila SQS devido a falha na notificação ao Backend.")
+            logger.warning(f"   [PASSO 6/6 - KAFKA RETRY] Offset NÃO confirmado devido a falha na notificação ao Backend.")
 
         pipeline_duration_ms = round((time.perf_counter() - pipeline_start) * 1000, 2)
         status_symbol = "✅" if outcome == "SUCCESS" else ("❌" if outcome == "WRONG_ANSWER" else "⚠")
@@ -296,15 +293,15 @@ class SubmissionWorker:
         logger.info("├" + "─" * 78 + "┤")
         logger.info(
             f"│ 🏁 [FINALIZADO] {status_symbol} Status: {outcome} | Duração Total: {pipeline_duration_ms:.2f} ms "
-            f"(Query PG: {exec_time:.2f} ms | Callback: {cb_time_ms:.2f} ms | SQS: {sqs_del_ms:.2f} ms{cpu_log_str})"
+            f"(Query PG: {exec_time:.2f} ms | Callback: {cb_time_ms:.2f} ms | Kafka ACK: {kafka_ack_ms:.2f} ms{cpu_log_str})"
         )
         logger.info("└" + "─" * 78 + "┘")
 
         return notified
 
     def process_one_message(self, wait_seconds: int = 2) -> bool:
-        """Busca e processa exatamente 1 mensagem da fila SQS se houver."""
-        messages = self.sqs.receive_messages(
+        """Busca e processa exatamente 1 mensagem da fila Kafka se houver."""
+        messages = self.kafka.receive_messages(
             max_messages=1,
             wait_time_seconds=wait_seconds,
             visibility_timeout=30
@@ -314,7 +311,7 @@ class SubmissionWorker:
         return False
 
     def log_heartbeat(self):
-        """Emite log periódico de liveness e status das métricas da sessão com CPU da máquina."""
+        """Emite log periódico de liveness e status das métricas da sessão."""
         uptime_seconds = int(time.time() - self.start_time)
         hours, remainder = divmod(uptime_seconds, 3600)
         minutes, seconds = divmod(remainder, 60)
@@ -329,7 +326,7 @@ class SubmissionWorker:
 
         cached_count = len(self.executor.cached_hashes)
         logger.info(
-            f"[HEARTBEAT] Worker ativo | Fila: '{self.sqs.queue_name}'{cpu_hb_str} | "
+            f"[HEARTBEAT] Worker ativo | Tópico: '{self.kafka.queue_name}'{cpu_hb_str} | "
             f"Processadas: {self.stats['total']} (✅ {self.stats['success']} | "
             f"❌ {self.stats['wrong_answer']} | ⚠ {self.stats['syntax_error']} | "
             f"⏱ {self.stats['timeout']}) | Hashes em RAM: {cached_count} | Uptime: {uptime_str}"
@@ -338,12 +335,12 @@ class SubmissionWorker:
     def run(self, once: bool = False, timeout_seconds: int = 10):
         """Loop principal do Worker."""
         self.print_startup_banner()
-        logger.info(f"Worker aguardando submissões na fila '{self.sqs.queue_name}'...")
+        logger.info(f"Worker aguardando submissões no tópico Kafka '{self.kafka.queue_name}'...")
         deadline = time.time() + timeout_seconds if once else None
 
         while self.running:
             try:
-                messages = self.sqs.receive_messages(
+                messages = self.kafka.receive_messages(
                     max_messages=1,
                     wait_time_seconds=2,
                     visibility_timeout=30
@@ -356,7 +353,6 @@ class SubmissionWorker:
                         break
                 else:
                     self.empty_poll_counter += 1
-                    # A cada ~30 segundos (15 polls de 2s sem mensagem), emite heartbeat de auditoria
                     if self.empty_poll_counter >= 15:
                         self.log_heartbeat()
                         self.empty_poll_counter = 0
@@ -399,6 +395,8 @@ def start_worker():
         worker.running = False
 
     signal.signal(signal.SIGINT, handle_signal)
+    if hasattr(signal, "SIGTERM"):
+        signal.signal(signal.SIGTERM, handle_signal)
     try:
         worker.run()
     finally:
@@ -406,4 +404,3 @@ def start_worker():
 
 if __name__ == "__main__":
     start_worker()
-

@@ -1,0 +1,24 @@
+# Git
+.git
+.gitignore
+
+# Ambientes virtuais e caches Python
+**/__pycache__/
+**/*.py[cod]
+**/.pytest_cache/
+app/.venv/
+.venv/
+venv/
+
+# Node / Frontend (compilado separadamente em frontend/Dockerfile)
+frontend/node_modules/
+frontend/dist/
+
+# Dados persistentes locais e Terraform
+ministack/data/
+terraform/.terraform/
+terraform/*.tfstate*
+terraform/envs/credentials.tfvars
+terraform/credentials.auto.tfvars
+.temp*
+*.log

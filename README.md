@@ -1,40 +1,84 @@
-# ⚔️ SQLArena - Plataforma de Ensino e Avaliação de SQL
+# ⚔️ SQLArena - Plataforma Distribuída de Ensino e Avaliação de SQL
 
-Plataforma distribuída para prática e avaliação de consultas SQL em ambiente real **PostgreSQL 16** com isolamento por schemas (Sandbox), avaliação assíncrona desacoplada via **Amazon SQS**, cache de validação via **Redis** e Infraestrutura como Código via **Terraform**.
+Plataforma elástica e isolada para prática e avaliação automatizada de consultas SQL em ambiente real **PostgreSQL 16** com isolamento por schemas (Sandbox), mensageria assíncrona via **Apache Kafka**, armazenamento de objetos compatível com S3 via **MinIO**, cache e rate-limit via **Redis**, auditoria NoSQL no **Amazon DynamoDB (AWS)** e orquestração completa com **Docker Compose**, **Kubernetes (Pods Multi-Container + HPA)** e **Terraform**.
 
 ---
 
-## 🏛️ Arquitetura do Sistema
+## 🏛️ Arquitetura do Sistema (Containers, Pods K8s & AWS DynamoDB)
 
 <p align="center">
   <img src="docs/arquitetura.png" alt="Arquitetura do Sistema SQLArena" width="100%" />
 </p>
 
-### Componentes e Papéis na Arquitetura
+### Componentes e Substituições da Arquitetura
 
-* ⚖️ **Application Load Balancer (ALB):** Ponto de entrada público na porta 80, distribuindo tráfego para a Camada Web e roteando callbacks internos dos Workers.
-* 🌐 **Camada Web (FastAPI + React SPA no ASG 1):** Gerencia autenticação JWT, CRUD de questões, rate limit e despacho assíncrono de submissões. **É o único componente que se conecta ao Amazon RDS e ao ElastiCache Redis**. Faz upload dos scripts SQL no **Amazon S3**, publica mensagens no **Amazon SQS**, processa callbacks de conclusão dos Workers (`POST /api/submissions/callback`) para creditar +10 XP no RDS, e **lê/escreve no Amazon DynamoDB** o histórico de submissões e logs de auditoria.
-* 🪣 **Amazon S3 (Armazenamento de Objetos):** Bucket dedicado (`sqlarena-questions-bucket`) onde residem exclusivamente os scripts SQL puros de cada questão (`schema.sql`, `data.sql` e `answer.sql`) sob o prefixo `questions/{id}/`.
-* 📬 **Amazon SQS:** Fila de mensageria assíncrona (`sqlarena-submissions-queue` + DLQ) que desacopla o envio da execução, absorvendo picos de concorrência.
-* ⚡ **Camada de Workers (ASG 2):** Processamento em background **100% desacoplado do RDS e do Redis**. Cada nó EC2 mantém seu próprio **PostgreSQL Local em Sandbox** (`localhost:5432`). Consome a fila SQS, faz o download sob demanda dos scripts do **Amazon S3** (*lazy loading*), armazena hashes de gabaritos em memória RAM ($O(1)$), executa a query do aluno em sandbox com isolamento estrito e notifica o término da avaliação via HTTP callback para o **ALB / FastAPI**.
-* 🗄️ **Amazon RDS (PostgreSQL 16):** Banco relacional gerenciado central acessado exclusivamente pela Camada Web. Armazena usuários, progresso consolidado (+10 XP) e metadados das questões e categorias.
-* 🏎️ **Amazon ElastiCache (Redis):** Cache em memória de baixa latência acessado exclusivamente pela Camada Web para rate limiting de 5s por aluno e recuperação imediata em $O(1)$ de gabaritos e status de polling.
-* 📄 **Amazon DynamoDB:** Banco NoSQL serverless para histórico imutável de todas as submissões executadas e log de auditoria administrativa. **Consultado pelo Backend** para alimentar as telas de histórico, progresso e auditoria.
+| Serviço / Camada | Tecnologia Atual | Função na Arquitetura SQLArena |
+| :--- | :--- | :--- |
+| **1. Banco NoSQL (Mantido na AWS)** | **Amazon DynamoDB** | Permanece como serviço gerenciado na nuvem AWS. Armazena de forma imutável o histórico de submissões/erros (`sqlarena-submissions-log`) e a auditoria de ações administrativas (`sqlarena-crud-actions-log`). |
+| **2. Banco Relacional Principal** | **Docker / K8s PostgreSQL 16** *(Substitui o Amazon RDS)* | Container `postgres:16-alpine` com volume persistente gerenciado por nós. Armazena usuários, categorias N:N, metadados das questões e pontuação consolidada (+10 XP). |
+| **3. Armazenamento de Arquivos** | **Docker / K8s MinIO** *(Substitui o Amazon S3)* | Container `minio/minio:latest` compatível com a API S3 (`boto3`). Armazena os scripts SQL puros de cada questão (`schema.sql`, `data.sql`, `answer.sql`) no bucket `sqlarena-questions-bucket` e os avatares dos usuários. |
+| **4. Fila de Mensagens Assíncrona** | **Docker / K8s Apache Kafka** *(Substitui o Amazon SQS)* | Container `apache/kafka:3.8.0` em modo **KRaft** (sem Zookeeper). Gerencia o tópico particionado `sqlarena-submissions-queue` (3 partições para paralelismo dos Workers) e a Dead Letter Queue (`sqlarena-submissions-queue-dlq`). |
+| **5. Cache & Rate Limit** | **Docker / K8s Redis 7** *(Substitui o ElastiCache)* | Container `redis:7-alpine`. Controla o Rate Limit de 5 segundos por aluno, cache de ranking/questões e status em tempo real para polling. |
+| **6. Imagem do Backend & Worker** | **`app/Dockerfile`** | Imagem Python 3.11 unificada que executa a API REST **FastAPI** (com seed automático inteligente `--if-empty`) e o **Worker Assíncrono**. |
+| **7. Imagem do Frontend** | **`frontend/Dockerfile`** | Build Multi-Stage: compila o **React 19 + Vite + Tailwind CSS v4** com Node 20 e serve via **Nginx 1.27 Alpine** com Reverse Proxy integrado para `/api`. |
 
 ---
 
-## 🧭 Visão dos Dois Ambientes: Local vs Nuvem AWS
+## 🧩 Arquitetura de Pods Multi-Container no Kubernetes (Sidecar Pattern)
 
-O projeto foi desenhado para funcionar de forma idêntica em dois cenários:
+Antes tínhamos duas Golden AMIs na AWS (uma para Web e outra para o Worker com Postgres local). No **Kubernetes**, convertemos essa exata topologia em **dois Deployments de Pods Multi-Container**, aproveitando o fato de que containers dentro do mesmo Pod compartilham a mesma interface de rede (`localhost` / `127.0.0.1`):
 
-| Recurso | 1. AMBIENTE LOCAL (Desenvolvimento no PC) | 2. NUVEM REAL (AWS Academy Learner Lab) |
-| :--- | :--- | :--- |
-| **Infraestrutura Base** | Docker Compose: Postgres 16 + Redis 7 + Ministack AWS | AWS Gerenciada (RDS Postgres, ElastiCache Redis, VPC, Subnets) |
-| **Serviços AWS Emulados** | S3, SQS, DynamoDB no Ministack (Porta 4566) | S3, SQS + DLQ, DynamoDB nativos da AWS |
-| **Terraform Workspace** | `envs/local.tfvars` | `envs/aws.tfvars` + `envs/credentials.tfvars` |
-| **Camada Web** | Terminal 1 (`uvicorn`) + Terminal 3 (`npm run dev`) | Instâncias EC2 gerenciadas por Auto Scaling Group (Web ASG) |
-| **Camada de Workers** | Terminal 2 (`python app/worker/main.py`) | Instâncias EC2 gerenciadas por Auto Scaling Group (Worker ASG) |
-| **Ponto de Entrada** | Frontend em `http://localhost:5173` | DNS público do Application Load Balancer (`alb_dns_name`) |
+```mermaid
+flowchart TB
+    subgraph AWS["☁️ Nuvem AWS"]
+        Dynamo[("📄 Amazon DynamoDB\n(Submissões & Auditoria CRUD)")]
+    end
+
+    subgraph K8S["☸️ Cluster Kubernetes (Amazon EKS) / Docker Compose"]
+        NP["🌐 Service NodePort (30080)\nPonto de Entrada Público"]
+        CIP["🔗 Service ClusterIP (sqlarena-web-clusterip:8000)\nComunicação Interna"]
+
+        subgraph PodWeb["📦 POD 1: Deployment 'sqlarena-web' (Escalável via HPA)"]
+            FE["🖥️ Container Frontend\n(React SPA + Nginx :80)"]
+            BE["⚙️ Container Backend\n(FastAPI :8000)"]
+            FE -- "Reverse Proxy via localhost\nhttp://127.0.0.1:8000/api" --> BE
+        end
+
+        subgraph PodWorker["📦 POD 2: Deployment 'sqlarena-worker' (Escalável via HPA)"]
+            WK["⚡ Container Worker\n(Python Consumer)"]
+            PGSB[("🐘 Container Postgres Sandbox\n(Sidecar Local 127.0.0.1:5432)")]
+            WK -- "Executa SQL do Aluno em\n127.0.0.1:5432 (Isolado)" --> PGSB
+        end
+
+        subgraph InfraServices["🗄️ Serviços de Dados no Cluster (Services ClusterIP)"]
+            PGMain[("🐘 Postgres Principal\n(postgres-service:5432)\n[Substitui RDS]")]
+            MinIO[("🪣 MinIO Storage\n(minio-service:9000)\n[Substitui S3]")]
+            Kafka[["📬 Apache Kafka KRaft\n(kafka-service:9092)\n[Substitui SQS]"]]
+            Redis[("🏎️ Redis Cache\n(redis-service:6379)\n[Substitui ElastiCache]")]
+        end
+
+        NP --> FE
+        BE --> PGMain
+        BE --> Redis
+        BE --> MinIO
+        BE -- "Publica Submissão" --> Kafka
+        Kafka -- "Consome (Consumer Group)" --> WK
+        WK -- "Lazy-Load SQL" --> MinIO
+        WK -- "Callback HTTP Resultado" --> CIP
+        CIP --> BE
+    end
+
+    BE <-->|"boto3 (Secrets K8s / LabRole)"| Dynamo
+```
+
+1. **Pod 1 — `sqlarena-web` (`k8s/07-web-pod.yaml`):**
+   * Roda o **Frontend (Nginx)** + **Backend (FastAPI)** juntos no mesmo Pod.
+   * O Nginx serve o React na porta `80` e encaminha `/api/*` diretamente para `http://127.0.0.1:8000` (loopback dentro do Pod, com latência zero!).
+   * Exposto externamente por um Service **NodePort** (`30080`) e internamente por um Service **ClusterIP** (`sqlarena-web-clusterip:8000`).
+2. **Pod 2 — `sqlarena-worker` (`k8s/08-worker-pod.yaml`):**
+   * Roda o **Worker Python** + **PostgreSQL 16 Sandbox** juntos no mesmo Pod.
+   * O Worker conecta em `postgresql://sandbox:sandboxpass@127.0.0.1:5432/sandbox_db` e usa um volume efêmero (`emptyDir`).
+   * **Escalabilidade Horizontal Perfeita (`k8s/09-hpa.yaml`):** Quando o **HorizontalPodAutoscaler (HPA)** escala o `sqlarena-worker` de 1 para 4 Pods sob carga de CPU, cada novo Pod já nasce com seu próprio banco PostgreSQL Sandbox exclusivo e entra automaticamente no Consumer Group do **Kafka** para dividir o consumo das partições!
 
 ---
 
@@ -43,201 +87,128 @@ O projeto foi desenhado para funcionar de forma idêntica em dois cenários:
 ```text
 SQLArena/
 ├── app/
-│   ├── api/            # Rotas REST (FastAPI): auth, questions, submissions, audit, etc.
-│   ├── auth/           # Utilitários de autenticação, hashing de senhas e RBAC
-│   ├── cache/          # Cliente Redis, controle de Rate Limit (5s) e hashes
-│   ├── database/       # PostgreSQL: Engine SQLAlchemy, modelos, seed.py e validator.py
-│   ├── dynamodb/       # Gerenciador de tabelas NoSQL de submissões e logs de auditoria
-│   ├── s3/             # Gerenciador do bucket S3 para scripts DDL/DML das questões
-│   ├── sqs/            # Produtor e consumidor de mensagens da fila Amazon SQS
-│   ├── worker/         # Processador assíncrono de avaliações em schemas sandbox
-│   ├── testes/         # Testes automatizados unitários e de integração E2E
-│   └── main.py         # App FastAPI + Ponto de montagem da SPA React compilada
-├── frontend/           # Aplicação React 18, Vite, Tailwind CSS e Monaco Editor
-├── locust/             # Testes de carga, concorrência e estresse (Locust)
-├── ministack/          # Compose local com Postgres, Redis e emulador AWS
-└── terraform/          # Infraestrutura como Código para Ministack e AWS Academy
-    ├── envs/
-    │   ├── local.tfvars                # Variáveis do ambiente Docker/Ministack
-    │   ├── aws.tfvars                  # Configurações para a AWS Nuvem (Região, S3)
-    │   ├── credentials.tfvars.example  # Template de credenciais temporárias da AWS
-    │   └── credentials.tfvars          # Chaves AWS e Golden AMIs (ignorado pelo Git)
-    ├── scripts/                        # Scripts de automação (AMIs, build e destruição)
-    └── *.tf                            # Definições puras de infraestrutura HCL
+│   ├── Dockerfile              # Imagem Docker do Backend (FastAPI) e do Worker
+│   ├── entrypoint.sh           # Script de boot com wait de banco e seed automático (--if-empty)
+│   ├── api/                    # Rotas REST (FastAPI): auth, questions, submissions, audit, users, ranking
+│   ├── cache/                  # Cliente Redis (Rate Limit de 5s e cache de status/ranking)
+│   ├── database/               # PostgreSQL Principal: SQLAlchemy, models.py, seed.py e validator.py
+│   ├── dynamodb/               # Cliente oficial do Amazon DynamoDB (AWS)
+│   ├── kafka/                  # Produtor, Consumidor e Admin do Apache Kafka (substituindo SQS)
+│   ├── s3/                     # Cliente MinIO compatível com S3 (substituindo Amazon S3)
+│   ├── sqs/                    # Adaptador compatível apontando para o KafkaQueueManager
+│   ├── worker/                 # Motor de avaliação isolado em PostgreSQL Sandbox
+│   ├── config.py               # Configurações centralizadas (Pydantic Settings)
+│   └── main.py                 # Ponto de entrada FastAPI
+├── frontend/
+│   ├── Dockerfile              # Imagem Docker Multi-Stage (Node 20 Build -> Nginx 1.27 Alpine)
+│   ├── nginx.conf.template     # Configuração do Nginx com Reverse Proxy dinâmico para /api
+│   └── src/                    # Código-fonte React 19, Tailwind CSS v4 e Monaco Editor
+├── k8s/                        # Manifestos Kubernetes (Deployments, Services ClusterIP/NodePort, Secrets, HPA)
+│   ├── 01-configmap.yaml       # Variáveis de ambiente não-sensíveis
+│   ├── 02-secrets.yaml         # Credenciais seguras (Postgres, MinIO, JWT e chaves AWS DynamoDB)
+│   ├── 03-postgres-main.yaml   # Deployment + PVC + Service ClusterIP do Postgres Principal
+│   ├── 04-redis.yaml           # Deployment + Service ClusterIP do Redis
+│   ├── 05-minio.yaml           # Deployment + PVC + Service ClusterIP e NodePort (30901) do MinIO
+│   ├── 06-kafka.yaml           # Deployment + Service ClusterIP do Apache Kafka (KRaft)
+│   ├── 07-web-pod.yaml         # POD 1 (Frontend + Backend) + Services ClusterIP e NodePort (30080)
+│   ├── 08-worker-pod.yaml      # POD 2 (Worker + Postgres Sandbox Sidecar) + Service ClusterIP
+│   └── 09-hpa.yaml             # HorizontalPodAutoscaler (HPA) para escalar Web Pods e Worker Pods
+├── terraform/                  # Infraestrutura como Código na AWS organizada em 2 Modos
+│   ├── README.md               # Documentação detalhada da organização do Terraform
+│   ├── envs/
+│   │   ├── credentials.tfvars.example # Modelo para chaves AWS / AWS Academy
+│   │   ├── modo1-eks.tfvars           # Variáveis para Modo 1 (100% EKS + DynamoDB)
+│   │   ├── modo2-ec2-compose.tfvars   # Variáveis para Modo 2 (1 EC2 com Docker Compose + DynamoDB)
+│   │   └── local.tfvars               # Variáveis para emulador local
+│   ├── modules/                # Módulos reutilizáveis: dynamodb, vpc, eks, ec2-compose
+│   ├── modo1-eks/              # Stack dedicada para Modo 1 (100% EKS + DynamoDB)
+│   ├── modo2-ec2-compose/      # Stack dedicada para Modo 2 (1 EC2 Docker Compose + DynamoDB)
+│   └── main.tf                 # Orquestrador raiz
+├── docker-compose.yml          # Orquestração completa dos 8 containers com 1 comando
+└── .env.example                # Modelo de variáveis de ambiente para o Docker Compose
 ```
 
 ---
 
-# 💻 TRILHA 1: AMBIENTE LOCAL (Desenvolvimento no seu PC)
+# 🐳 GUIA 1: EXECUÇÃO COM DOCKER E DOCKER COMPOSE (Local ou em EC2 na AWS)
 
-> [!IMPORTANT]
-> ### ⚠️ Por que rodar o Backend e o Worker em terminais separados no seu PC?
-> * **Na AWS Real (Nuvem):** O Terraform cria servidores virtuais **EC2 reais**. Quando as máquinas ligam, a AWS executa automaticamente o script `user_data`, que sobe a Camada Web e a Camada de Workers de forma autônoma.
-> * **No seu PC (Ministack Local):** O Ministack emula APIs AWS, mas **não cria máquinas virtuais**. A sua máquina física faz o papel das EC2s:
->   * O **Terminal 1** (`uvicorn`) faz o papel da EC2 da Camada Web.
->   * O **Terminal 2** (`python app/worker/main.py`) faz o papel da EC2 dos Workers.
->   * O **Terminal 3** (`npm run dev`) roda o servidor de desenvolvimento do React.
-> * **O que acontece se o Worker não estiver rodando?**
->   A consulta enviada pelo usuário cai na fila **Amazon SQS**. Se o **Worker não estiver rodando no Terminal 2**, **ninguém processa a fila**, e a submissão fica indefinidamente como *"Processando..."*.
+Com o novo [`docker-compose.yml`](docker-compose.yml) na raiz do projeto, **todos os serviços** (Frontend, Backend, Worker, Postgres Principal, Postgres Sandbox, MinIO, Kafka e Redis) sobem juntos com um único comando e se conectam ao **Amazon DynamoDB** da AWS.
 
----
+### Passo 1: Configurar o arquivo `.env` com suas Credenciais AWS (para o DynamoDB)
+Na raiz do projeto (`SQLArena/`), copie o arquivo de exemplo `.env.example` para `.env`:
 
-### Passo 1: Subir a Infraestrutura Base (Docker)
-No PowerShell na raiz do projeto (`SQLArena/`):
 ```powershell
-docker compose -f ministack/docker-compose.yml up -d
+# No Windows (PowerShell):
+Copy-Item .env.example .env
+
+# No Linux / EC2:
+cp .env.example .env
 ```
-*Inicia o PostgreSQL 16 (porta 15432), Redis 7 (porta 16379), Ministack AWS (porta 4566) e o painel StackPort (porta 8080).*
 
----
+Abra o arquivo `.env` e preencha suas credenciais da AWS (do seu **AWS Academy Learner Lab -> AWS Details -> AWS CLI**) para que o Backend grave e consulte nas tabelas do **Amazon DynamoDB**:
 
-### Passo 2: Provisionar a Infraestrutura Local via Terraform (IaC)
+```env
+AWS_REGION=us-east-1
+AWS_ACCESS_KEY_ID=ASIA...
+AWS_SECRET_ACCESS_KEY=...
+AWS_SESSION_TOKEN=IQoJb3JpZ2luX2VjE...
+DYNAMODB_ENDPOINT_URL=
+```
+*(💡 **Dica para teste 100% offline no PC:** Caso queira testar no seu computador sem internet/sem conta AWS aberta, basta subir o Ministack na porta 4566 ou definir `DYNAMODB_ENDPOINT_URL=http://host.docker.internal:4566` com chaves `test`).*
+
+### Passo 2: Construir as Imagens e Iniciar Todos os Containers
+Na raiz do projeto (`SQLArena/`), execute:
+
 ```powershell
-cd terraform
-terraform init
-terraform apply -var-file="envs/local.tfvars" -auto-approve
-cd ..
+docker compose up -d --build
 ```
-*O Terraform criará no Ministack o Bucket S3, Fila SQS + DLQ, Tabelas DynamoDB, VPC e definições de banco.*
 
----
+> ⚙️ **O que acontece automaticamente quando você roda esse comando?**
+> 1. O Docker inicia os containers de infraestrutura com *healthchecks*:
+>    * `sqlarena-postgres` (PostgreSQL 16 Principal na porta `15432`)
+>    * `sqlarena-postgres-sandbox` (PostgreSQL 16 Sandbox do Worker na porta `15433`)
+>    * `sqlarena-redis` (Redis 7 na porta `16379`)
+>    * `sqlarena-minio` (MinIO S3 API na porta `9000` e Console Web na porta `9001`)
+>    * `sqlarena-kafka` (Apache Kafka KRaft na porta `9092`)
+> 2. O container `sqlarena-backend` constrói a imagem a partir de [`app/Dockerfile`](app/Dockerfile), executa automaticamente o `seed.py --if-empty` (criando as tabelas no Postgres, o bucket e os 63 arquivos `.sql` das 21 questões no **MinIO**, os tópicos no **Kafka** e as tabelas no **AWS DynamoDB**) e inicia a API FastAPI na porta `8000`.
+> 3. O container `sqlarena-worker` inicia o consumidor do **Kafka**, pronto para baixar os scripts do **MinIO** e avaliar consultas no `sqlarena-postgres-sandbox`.
+> 4. O container `sqlarena-frontend` constrói a imagem a partir de [`frontend/Dockerfile`](frontend/Dockerfile) e inicia o Nginx nas portas `80` e `5173`.
 
-### Passo 3: Ativar o Python e Rodar o Seed
-Na raiz do projeto (`SQLArena/`):
+### Passo 3: Acessar os Serviços
+* 🚀 **Aplicação Web Completa (Frontend + API):** [http://localhost](http://localhost) ou [http://localhost:5173](http://localhost:5173) *(na EC2: `http://<IP_PUBLICO_EC2>`)*
+* 📖 **Documentação Swagger UI (FastAPI):** [http://localhost:8000/docs](http://localhost:8000/docs)
+* 🪣 **Console Web do MinIO (Visualizar Arquivos SQL):** [http://localhost:9001](http://localhost:9001)
+  * **Usuário:** `minioadmin` | **Senha:** `minioadmin123`
+
+### Comandos Úteis do Docker Compose
 ```powershell
-# Ativar o ambiente virtual:
-& app/.venv/Scripts/Activate.ps1
+# Ver o status de todos os containers:
+docker compose ps
 
-# (Caso o PowerShell restrinja scripts, execute uma vez:)
-# Set-ExecutionPolicy -Scope Process -ExecutionPolicy RemoteSigned
+# Acompanhar os logs do Backend e do Worker em tempo real:
+docker compose logs -f backend worker
 
-# Instalar dependências (apenas na primeira vez):
-pip install -r app/requirements.txt
+# Parar e remover os containers (mantendo volumes):
+docker compose down
 
-# Executar o seed:
-$env:PYTHONPATH="."
-python app/database/seed.py
+# Parar e apagar todos os volumes (reset completo):
+docker compose down -v
 ```
-> ✅ O `seed.py` utiliza o `QuestionValidator` para validar as 21 questões em schemas isolados no PostgreSQL, extrair colunas reais, gerar os hashes canônicos SHA-256 no RDS e no Redis, enviar os scripts para o S3 e cadastrar os usuários de teste.
 
 ---
 
-### Passo 4: Ligar o Backend FastAPI (Terminal 1)
-Na raiz do projeto (`SQLArena/`):
-```powershell
-& app/.venv/Scripts/Activate.ps1
-uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
-```
-* 🌐 **API Rodando em:** [http://localhost:8000](http://localhost:8000)
-* 📖 **Swagger UI:** [http://localhost:8000/docs](http://localhost:8000/docs)
-* 🩺 **Health Check:** [http://localhost:8000/api/health](http://localhost:8000/api/health)
+# ☁️ GUIA 2: IMPLANTAÇÃO NA AWS COM TERRAFORM (2 Modos Organizados)
+
+A pasta [`terraform/`](terraform/) foi organizada em módulos limpos (`dynamodb`, `vpc`, `ec2-compose` e `eks`) para suportar **duas formas de implantação na AWS**, mantendo sempre o **Amazon DynamoDB** na AWS:
+
+1. **Modo 2 (`ec2_compose`):** Provisiona as tabelas do **DynamoDB** + **1 única instância EC2 (`t3.medium`)** que já instala Docker e Docker Compose automaticamente no boot (`user_data`), clona o repositório e sobe toda a pilha com `docker compose up -d --build`.
+2. **Modo 1 (`eks`):** Provisiona as tabelas do **DynamoDB** + repositórios **Amazon ECR** + cluster Kubernetes gerenciado **Amazon EKS** com Worker Nodes para rodar nossos Pods escaláveis (`k8s/`).
 
 ---
 
-### Passo 5: Ligar o Worker SQS (Terminal 2)
-Abra um **segundo terminal** na raiz do projeto (`SQLArena/`):
-```powershell
-& app/.venv/Scripts/Activate.ps1
-$env:PYTHONPATH="."
-python app/worker/main.py
-```
-* ⚙️ **Função:** Fica em loop consumindo a fila SQS `sqlarena-submissions-queue`. Quando uma query chega, executa em schema isolado, compara o hash no Redis e registra no RDS e DynamoDB.
-
----
-
-### Passo 6: Ligar o Frontend React (Terminal 3)
-Abra um **terceiro terminal**, acesse a pasta `frontend`:
-```powershell
-cd frontend
-npm install    # (apenas na primeira vez)
-npm run dev
-```
-* 🚀 **Acesse no navegador:** **[http://localhost:5173](http://localhost:5173)**
-
----
-
-### 🔑 Credenciais Prontas para Teste
-
-| Perfil | Email | Senha | Acesso |
-| :--- | :--- | :--- | :--- |
-| **Aluno** | `gustavo@sqlarena.com` | `123456` | Dashboard, Arena Monaco (editor com restauração da última tentativa), Histórico em Modal, Pontuação |
-| **Instrutor** | `admin@sqlarena.com` | `123456` | Painel de Questões, Validação Dinâmica Sandbox, Categorias N:N, Auditoria de Ações, Gestão de Usuários |
-
----
-
-### 🖥️ Resumo dos 3 Terminais Necessários Localmente
-
-| Terminal | O que roda | Comando | O que faz no sistema |
-| :---: | :--- | :--- | :--- |
-| **Terminal 1** | **Backend API** | `uvicorn app.main:app --reload --host 0.0.0.0 --port 8000` | Recebe requisições HTTP e envia submissões para o SQS |
-| **Terminal 2** | **Worker SQS** | `python app/worker/main.py` | **OBRIGATÓRIO:** Consome a fila SQS e avalia as consultas SQL |
-| **Terminal 3** | **Frontend SPA** | `cd frontend; npm run dev` | Interface web em React no navegador (`http://localhost:5173`) |
-
----
-
-### ❓ Perguntas Frequentes & Diagnóstico (Troubleshooting)
-
-#### 1. "Cliquei em 'Executar' na Arena e a tela ficou em 'Processando...' sem sair do lugar?"
-* **Causa:** O **Worker (Terminal 2)** não está ligado! A consulta foi despachada para a fila SQS, mas ninguém está consumindo a fila.
-* **Solução:** Abra o **Terminal 2** com o `.venv` ativo e execute:
-  ```powershell
-  & app/.venv/Scripts/Activate.ps1
-  $env:PYTHONPATH="."
-  python app/worker/main.py
-  ```
-  Assim que o Worker ligar, ele pegará as consultas pendentes imediatamente, executará no PostgreSQL Sandbox e a tela atualizará no mesmo instante!
-
-#### 2. "O Terraform não deveria ligar as máquinas EC2 e o Worker sozinho?"
-* **Na AWS Real:** SIM. O Terraform provisiona instâncias EC2 gerenciadas pela Amazon e executa o script `user_data`, que configura e sobe o sistema sozinho.
-* **No Computador Local:** NÃO. O Ministack é apenas um emulador de API e não cria máquinas virtuais no Windows. No seu computador, a sua própria máquina física faz o papel das instâncias EC2.
-
-#### 3. "Como a Camada de Workers está isolada do RDS e do Redis?"
-* **PostgreSQL Local em cada EC2 (Sandbox Descartável):**
-  - Cada máquina de Worker hospeda seu próprio PostgreSQL local (`localhost:5432`).
-  - As consultas dos alunos rodam 100% isoladas na máquina do Worker, com *blast radius* zero: se uma query for lenta ou pesada, ela afeta apenas aquela EC2 descartável e nunca toca no RDS central de produção.
-* **Tabela Hash em Memória RAM e Lazy-Loading do S3:**
-  - O Worker não precisa pré-carregar todos os exercícios: ele baixa do **Amazon S3** sob demanda apenas os exercícios que chegarem em sua fila.
-  - Os hashes oficiais dos gabaritos ficam salvos na memória RAM do Worker em uma tabela hash ($O(1)$), eliminando qualquer dependência de rede com o ElastiCache Redis para validação de respostas.
-* **Comunicação Desacoplada via Callback HTTP:**
-  - O Worker não possui credenciais do banco RDS nem do Redis.
-  - Ao finalizar a avaliação, o Worker faz uma chamada HTTP (`POST /api/submissions/callback`) para o Application Load Balancer.
-  - A Camada Web (FastAPI) — e **apenas ela** — acessa o RDS para creditar os +10 XP ao aluno e atualiza o Redis e o DynamoDB.
-
----
-
-### 🛑 Como Desligar / Destruir o Ambiente Local
-1. Finalize com `Ctrl + C` os terminais do Frontend, Worker e Backend.
-2. Destrua os recursos do Terraform local:
-   ```powershell
-   cd terraform
-   terraform destroy -var-file="envs/local.tfvars" -auto-approve
-   cd ..
-   ```
-3. Destrua os containers Docker e volumes:
-   ```powershell
-   docker compose -f ministack/docker-compose.yml down -v
-   ```
-
----
-
-# ☁️ TRILHA 2: DEPLOY NA NUVEM (AWS Academy Learner Lab)
-
-Quando você for testar ou apresentar o projeto na sua conta da **AWS Academy Learner Lab**:
-
-### 1. Obter as Credenciais no AWS Academy
-1. Entre no seu **AWS Academy Learner Lab** e clique no botão verde **Start Lab**.
-2. Quando o status mudar para verde, clique no botão **AWS Details**.
-3. Na seção **AWS CLI**, copie os valores das credenciais temporárias:
-   * `aws_access_key_id`
-   * `aws_secret_access_key`
-   * `aws_session_token`
-
----
-
-### 2. Configurar as Credenciais Seguras (Ignoradas pelo Git)
-Para garantir que suas chaves temporárias **nunca sejam enviadas para o GitHub**, o repositório já inclui o arquivo `credentials.tfvars` no `.gitignore`.
-
-Na pasta `terraform/envs/`, crie o arquivo `credentials.tfvars` (você pode copiar o modelo [`credentials.tfvars.example`](terraform/envs/credentials.tfvars.example)):
+## Preparação Comum: Configurar Credenciais do AWS Academy
+1. No seu **AWS Academy Learner Lab**, clique em **Start Lab** e depois em **AWS Details -> AWS CLI**.
+2. Copie o modelo `terraform/envs/credentials.tfvars.example` para `terraform/envs/credentials.tfvars` (este arquivo é ignorado pelo Git):
 
 ```hcl
 aws_access_key    = "ASIA..."
@@ -247,175 +218,150 @@ aws_session_token = "IQoJb3JpZ2luX2VjE..."
 
 ---
 
-### 3. Ajustar o Nome Único do Bucket S3
-Abra o arquivo [`terraform/envs/aws.tfvars`](terraform/envs/aws.tfvars) e defina um nome exclusivo para o bucket S3 (nomes de bucket S3 são únicos no mundo inteiro):
+## 🅰️ MODO 2 NA AWS: Apenas Docker e Docker Compose em 1 EC2 + DynamoDB
 
-```hcl
-aws_region     = "us-east-1"
-s3_bucket_name = "sqlarena-questions-bucket-academy-gustavo"
-```
-
----
-
-### 4. (Recomendado) Gerar as Golden AMIs para Boot em 15 segundos
-Para que o Auto Scaling suba novas máquinas em **apenas 15 segundos** (em vez de esperar 4 minutos instalando tudo do zero a cada máquina que nasce), geramos as Golden AMIs **antes** do apply:
-
-```powershell
-# Na raiz do projeto:
-python terraform/scripts/build_golden_amis.py
-```
-
-> 💡 **O que o script faz sozinho para você:**
-> 1. Lê suas credenciais da AWS em `terraform/envs/credentials.tfvars`.
-> 2. Sobe as máquinas temporárias de build na AWS e executa os scripts salvos em [`terraform/scripts/`](terraform/scripts/):
->    * [`setup_worker.sh`](terraform/scripts/setup_worker.sh): Instala PostgreSQL Sandbox local, Python e dependências do Worker.
->    * [`setup_web.sh`](terraform/scripts/setup_web.sh): Instala Node.js 20, compila a SPA React (`npm run build`) e prepara a API FastAPI.
-> 3. As máquinas **desligam sozinhas** automaticamente quando a instalação termina.
-> 4. O script congela os discos, gera as AMIs e **grava automaticamente** os IDs no arquivo ignorado [`terraform/envs/credentials.tfvars`](terraform/envs/credentials.tfvars).
-> 5. Exclui as máquinas temporárias de build.
->
-> *(Nota: Se você preferir não rodar esse script, o Terraform usará a AMI pública do Ubuntu e fará a instalação completa no boot das máquinas).*
-
----
-
-### 5. Executar o Provisionamento no AWS Academy (Terraform Apply)
-Com as credenciais e as variáveis configuradas, execute o deploy:
+Ideal para subir toda a aplicação rapidamente em uma única máquina EC2 na AWS gastando o mínimo de créditos do laboratório:
 
 ```powershell
 cd terraform
-
-# 1. Inicializar os provedores:
 terraform init
+terraform apply -var-file="envs/modo2-ec2-compose.tfvars" -var-file="envs/credentials.tfvars"
+```
+*(Alternativamente, você também pode entrar na pasta dedicada `cd terraform/modo2-ec2-compose`, rodar `terraform init` e `terraform apply -var-file="../envs/credentials.tfvars"`).*
 
-# 2. Aplicar e provisionar a infraestrutura completa na nuvem:
-terraform apply -var-file="envs/aws.tfvars" -var-file="envs/credentials.tfvars"
+### Como acessar após o `terraform apply`:
+O Terraform exibirá no terminal os links prontos:
+* **`modo2_frontend_url`** = `http://<IP_PUBLICO_EC2>` *(Plataforma SQLArena)*
+* **`modo2_swagger_url`** = `http://<IP_PUBLICO_EC2>:8000/docs` *(Swagger UI)*
+* **`modo2_minio_console_url`** = `http://<IP_PUBLICO_EC2>:9001` *(Painel do MinIO)*
+
+*(Aguarde cerca de 2 a 3 minutos após a criação da EC2 para que o script de `user_data` conclua a instalação do Docker e o build inicial das imagens. Você pode acompanhar via SSH com `tail -f /var/log/cloud-init-output.log`).*
+
+---
+
+## 🅱️ MODO 1 NA AWS: 100% Amazon EKS (Kubernetes) + DynamoDB
+
+Provisiona um cluster Kubernetes real (**Amazon EKS**), repositórios de imagem (**Amazon ECR**) e as tabelas do **Amazon DynamoDB**:
+
+### Passo 1: Provisionar o Cluster EKS e o DynamoDB via Terraform
+```powershell
+cd terraform
+terraform init
+terraform apply -var-file="envs/modo1-eks.tfvars" -var-file="envs/credentials.tfvars"
+```
+*(Ou diretamente na pasta dedicada: `cd terraform/modo1-eks`, `terraform init` e `terraform apply -var-file="../envs/credentials.tfvars"`).*
+
+### Passo 2: Conectar seu `kubectl` ao Cluster EKS criado
+Copie e execute o comando retornado no output `modo1_eks_kubeconfig_command`:
+```powershell
+aws eks update-kubeconfig --region us-east-1 --name sqlarena-eks
+kubectl get nodes
 ```
 
-> ⚖️ **Como a Golden AMI se conecta ao RDS, Redis e S3?**
-> A Golden AMI já vem com os binários e dependências instalados no disco. Quando o Auto Scaling inicia a máquina, o Terraform injeta as variáveis dinâmicas (endereço do RDS criado, host do Redis, nome da fila SQS) no arquivo `/opt/sqlarena/app/.env` em **1 segundo**, e inicia os serviços. Para o S3 e DynamoDB, as EC2s usam a IAM Role (`LabInstanceProfile`) para autenticação automática sem necessidade de senhas fixas.
+### Passo 3: Enviar as Imagens Docker para o Amazon ECR (ou Docker Hub)
+Use as URLs retornadas nos outputs `modo1_ecr_backend_url` e `modo1_ecr_frontend_url`:
+```powershell
+# 1. Login no Amazon ECR (substitua <ACCOUNT_ID> pelo ID da sua conta AWS):
+aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin <ACCOUNT_ID>.dkr.ecr.us-east-1.amazonaws.com
+
+# 2. Build e Push da imagem do Backend/Worker:
+docker build -t sqlarena-backend:latest -f app/Dockerfile .
+docker tag sqlarena-backend:latest <ACCOUNT_ID>.dkr.ecr.us-east-1.amazonaws.com/sqlarena-backend:latest
+docker push <ACCOUNT_ID>.dkr.ecr.us-east-1.amazonaws.com/sqlarena-backend:latest
+
+# 3. Build e Push da imagem do Frontend:
+docker build -t sqlarena-frontend:latest -f frontend/Dockerfile ./frontend
+docker tag sqlarena-frontend:latest <ACCOUNT_ID>.dkr.ecr.us-east-1.amazonaws.com/sqlarena-frontend:latest
+docker push <ACCOUNT_ID>.dkr.ecr.us-east-1.amazonaws.com/sqlarena-frontend:latest
+```
+*(Em [`k8s/07-web-pod.yaml`](k8s/07-web-pod.yaml) e [`k8s/08-worker-pod.yaml`](k8s/08-worker-pod.yaml), atualize o campo `image:` com a URL do seu ECR caso esteja rodando no EKS em múltiplas máquinas. Em clusters locais ou K3s/Minikube em EC2, a imagem local `sqlarena-backend:latest` e `sqlarena-frontend:latest` com `imagePullPolicy: IfNotPresent` já funciona direto!).*
 
 ---
 
-### 6. Acessar a Aplicação na Nuvem
+# ☸️ GUIA 3: IMPLANTAÇÃO NO KUBERNETES (Deployments, Services NodePort/ClusterIP, Secrets e HPA)
 
-Após o término do `terraform apply`, visualize a URL pública do Load Balancer exibida nos outputs:
+Todos os manifestos Kubernetes estão na pasta [`k8s/`](k8s/) numerados em ordem lógica de inicialização:
 
-```text
-Outputs:
-alb_dns_name = "sqlarena-alb-xxxxxxxx.us-east-1.elb.amazonaws.com"
+### 1. Configurar Credenciais de Forma Segura no Secret (`k8s/02-secrets.yaml`)
+O arquivo [`k8s/02-secrets.yaml`](k8s/02-secrets.yaml) armazena de forma segura e isolada todas as senhas do banco, chaves JWT, credenciais do MinIO e credenciais da AWS para o DynamoDB:
+* Abra `k8s/02-secrets.yaml` e preencha `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` e `AWS_SESSION_TOKEN` (ou crie/atualize via linha de comando sem salvar senhas em arquivo):
+  ```powershell
+  kubectl apply -f k8s/01-configmap.yaml
+  kubectl apply -f k8s/02-secrets.yaml
+  ```
+
+### 2. Subir os Serviços de Dados e Mensageria (`ClusterIP` e `NodePort`)
+```powershell
+kubectl apply -f k8s/03-postgres-main.yaml
+kubectl apply -f k8s/04-redis.yaml
+kubectl apply -f k8s/05-minio.yaml
+kubectl apply -f k8s/06-kafka.yaml
 ```
 
-Abra seu navegador e acesse:
-* 🚀 **Plataforma Web Completa:** `http://<alb_dns_name>`
-* 📖 **Documentação Swagger (Swagger UI):** `http://<alb_dns_name>/docs`
-* 🩺 **Health Check:** `http://<alb_dns_name>/api/health`
+### 3. Subir os Pods Multi-Container da Aplicação (`sqlarena-web` e `sqlarena-worker`) e o Auto Scaling (`HPA`)
+```powershell
+kubectl apply -f k8s/07-web-pod.yaml
+kubectl apply -f k8s/08-worker-pod.yaml
+kubectl apply -f k8s/09-hpa.yaml
+```
+*(Ou aplique toda a pasta de uma só vez com: **`kubectl apply -f k8s/`**)*
+
+### 4. Verificar Pods, Services (`NodePort` e `ClusterIP`) e Escalabilidade (`HPA`)
+```powershell
+# Verificar os Pods rodando (note a coluna READY 2/2 nos Pods Web e Worker!):
+kubectl get pods
+
+# Verificar os Services ClusterIP e NodePort:
+kubectl get services
+
+# Verificar o HorizontalPodAutoscaler (HPA):
+kubectl get hpa
+```
+
+### Resumo dos Services Kubernetes Configurados
+
+| Nome do Service | Tipo | Porta Interna | NodePort Externo | Função |
+| :--- | :---: | :---: | :---: | :--- |
+| **`sqlarena-web-nodeport`** | `NodePort` | `80` / `8000` | **`30080`** / **`30800`** | Acesso público externo ao Pod Web (Frontend React + API FastAPI) |
+| **`sqlarena-web-clusterip`** | `ClusterIP` | `80` / `8000` | — | Comunicação interna no cluster (recebe os callbacks HTTP dos Pods de Worker) |
+| **`postgres-service`** | `ClusterIP` | `5432` | — | Acesso interno do Backend ao PostgreSQL Principal (ex-RDS) |
+| **`redis-service`** | `ClusterIP` | `6379` | — | Acesso interno do Backend ao Redis (Rate Limit e Cache) |
+| **`minio-service`** | `ClusterIP` | `9000` / `9001` | — | Acesso interno S3 da API e dos Workers ao MinIO |
+| **`minio-console-nodeport`** | `NodePort` | `9001` | **`30901`** | Acesso externo ao Console Web do MinIO no navegador |
+| **`kafka-service`** | `ClusterIP` | `9092` | — | Broker Apache Kafka interno para envio e consumo de submissões |
+| **`sqlarena-worker-clusterip`**| `ClusterIP` | `5432` | — | Descoberta interna dos Pods de Worker + Postgres Sandbox |
+
+### Como Acessar a Aplicação no Kubernetes:
+1. Descubra o IP externo de qualquer nó do cluster Kubernetes:
+   ```powershell
+   kubectl get nodes -o wide
+   ```
+2. Acesse no navegador usando as portas **NodePort**:
+   * 🚀 **Plataforma Web SQLArena:** `http://<IP_PUBLICO_DO_NODE>:30080`
+   * 📖 **Swagger UI (FastAPI):** `http://<IP_PUBLICO_DO_NODE>:30800/docs`
+   * 🪣 **Console Web do MinIO:** `http://<IP_PUBLICO_DO_NODE>:30901`
 
 ---
 
-### 7. Monitoramento e Diagnóstico na Nuvem
+## 🔑 Credenciais Prontas para Teste na Plataforma
 
-Se precisar inspecionar o funcionamento dos serviços dentro das instâncias EC2:
-* **Logs da Camada Web (FastAPI + SPA):**
-  ```bash
-  journalctl -u sqlarena-web.service -f
-  ```
-* **Logs da Camada de Workers:**
-  ```bash
-  journalctl -u sqlarena-worker.service -f
-  ```
-* **Logs de inicialização da máquina (User Data):**
-  ```bash
-  tail -f /var/log/cloud-init-output.log
-  ```
+| Perfil | Email | Senha | Funcionalidades Liberadas |
+| :--- | :--- | :--- | :--- |
+| **Aluno** | `gustavo@sqlarena.com` | `123456` | Dashboard de Questões, Arena SQL Monaco Editor, Fila ao Vivo, Histórico em Modal, Ranking e Perfil com Avatar |
+| **Instrutor** | `admin@sqlarena.com` | `123456` | Painel de Criação/Publicação/Exclusão de Questões com Validação Sandbox, Logs do DynamoDB, Auditoria de CRUD e Gestão de Usuários |
 
 ---
 
-### 8. Destruir os Recursos e Excluir AMIs/Snapshots (Custo Zero Garantido)
+## 🛑 Como Destruir a Infraestrutura na AWS (Custo Zero)
 
-Para não consumir créditos da sua conta e garantir que **absolutamente tudo** seja eliminado (instâncias EC2, banco RDS e dados, tabelas DynamoDB, cluster Redis, filas SQS, bucket S3 com arquivos, **e também as Golden AMIs e Snapshots EBS**):
-
-#### Opção A (Pelo Terraform - Recomendado):
-O arquivo [`ami_lifecycle.tf`](terraform/ami_lifecycle.tf) chama automaticamente a rotina de exclusão das AMIs e Snapshots no destroy:
+Para encerrar todos os recursos provisionados na AWS ao final dos testes:
 
 ```powershell
 cd terraform
-terraform destroy -var-file="envs/aws.tfvars"
+
+# Se subiu o Modo 2 (EC2 + Docker Compose):
+terraform destroy -var-file="envs/modo2-ec2-compose.tfvars" -var-file="envs/credentials.tfvars" -auto-approve
+
+# Se subiu o Modo 1 (EKS + DynamoDB):
+terraform destroy -var-file="envs/modo1-eks.tfvars" -var-file="envs/credentials.tfvars" -auto-approve
 ```
-
-#### Opção B (Via Script de Destruição Total):
-```powershell
-python terraform/scripts/destroy_all.py --var-file="envs/aws.tfvars"
-```
-
----
-
-## 🧪 Suíte de Testes Automatizados (pytest)
-
-Com a infraestrutura ativa (localmente no Ministack ou na AWS):
-
-```powershell
-$env:PYTHONPATH="."
-pytest app/testes/test_api.py app/testes/test_worker_e2e.py app/testes/test_e2e_full.py -v
-```
-
-Scripts de teste individuais de cada serviço AWS:
-```powershell
-python app/testes/main_s3.py
-python app/testes/main_sqs.py
-python app/testes/main_dynamodb.py
-```
-
----
-
-## ⚡ Teste de Carga e Auto Scaling com Locust
-
-O projeto inclui um cenário completo de teste de estresse em [`locust/locustfile.py`](locust/locustfile.py) que simula o comportamento real de centenas de alunos e instrutores simultâneos:
-* Cadastro automático e autenticação com JWT
-* Navegação pelo catálogo e abertura de detalhes de exercícios
-* Submissão assíncrona de consultas SQL com mix probabilístico realista:
-  * **60% Gabarito Correto (`SUCCESS`):** valida SHA-256 no worker, pontua no RDS, invalida e reaquece o cache de Ranking no Redis e loga no DynamoDB.
-  * **20% Resposta Incorreta (`WRONG_ANSWER`):** compara hash divergente e audita no DynamoDB.
-  * **15% Erro de Sintaxe (`SYNTAX_ERROR`):** dispara rollback na sandbox e registra log no DynamoDB.
-  * **5% Comando Proibido (`BLOCKED_DML`):** intercepta tentativa destrutiva (`DROP`, `DELETE`).
-* Polling assíncrono dos resultados até conclusão pelo Worker.
-* Consulta contínua ao ranking (testando o cache do Redis sob alta concorrência).
-* Ações administrativas do Instrutor (inspeção de logs de auditoria no DynamoDB).
-
-### 1. Executando Localmente (com Interface Gráfica Web)
-
-Com o backend ativo em um terminal (`uvicorn app.main:app --port 8000`) e o worker em outro (`python app/worker/main.py`), execute:
-
-```powershell
-app\.venv\Scripts\locust.exe -f locust/locustfile.py --host http://localhost:8000
-```
-
-1. Abra seu navegador em: **[http://localhost:8089](http://localhost:8089)**
-2. Defina o **Number of users** (ex: `20` ou `50`) e o **Spawn rate** (ex: `5`).
-3. Clique em **Start swarming** e acompanhe os gráficos de RPS, tempos de resposta e falhas em tempo real!
-
-### 2. Estressando o Auto Scaling na AWS (Load Balancer Real)
-
-Após aplicar o Terraform na AWS, utilize a URL pública do Load Balancer (`alb_dns_name`):
-
-```powershell
-app\.venv\Scripts\locust.exe -f locust/locustfile.py --host http://<alb_dns_name>
-```
-
-#### O que observar na AWS enquanto o Locust roda:
-1. **Auto Scaling de Web (`asg_web`):**
-   * No console da AWS, vá em **EC2 > Auto Scaling Groups > `sqlarena-web-asg`**.
-   * Quando o tráfego dos alunos virtuais elevar a CPU das instâncias acima de 70%, o Auto Scaling adicionará novas instâncias EC2 automaticamente.
-2. **Auto Scaling de Workers (`worker_asg`):**
-   * No console da AWS, vá em **CloudWatch > Alarms** e observe a fila **SQS**.
-   * O acúmulo de submissões na fila acionará o alarme de backlog, fazendo o Auto Scaling Group de workers escalar novas instâncias para zerar a fila.
-3. **Escala para Baixo (Scale Down):**
-   * Quando você parar o teste no Locust, o tráfego e a fila voltam a zero e a AWS desliga as instâncias excedentes com segurança.
-
-### 3. Modo Headless (Execução rápida via terminal sem interface web)
-
-Para rodar um teste automatizado de 30 segundos com 10 usuários direto no terminal:
-
-```powershell
-app\.venv\Scripts\locust.exe -f locust/locustfile.py --host http://localhost:8000 --users 10 --spawn-rate 2 --run-time 30s --headless
-```
-

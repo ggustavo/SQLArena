@@ -7,7 +7,7 @@ from typing import Dict, Any, List, Optional, Tuple
 import psycopg2
 from psycopg2 import sql, extras
 from app.config import settings
-from app.s3.s3_manager import S3Manager
+from app.minio.minio_manager import MinioManager
 
 logger = logging.getLogger("SandboxExecutor")
 
@@ -30,7 +30,7 @@ class SandboxExecutor:
     """
 
     def __init__(self):
-        self.s3 = S3Manager()
+        self.minio = MinioManager()
         raw_url = settings.SANDBOX_DATABASE_URL or settings.DATABASE_URL
         self.db_url = raw_url.replace("postgresql+psycopg2://", "postgresql://")
         # Normalização preventiva: se contiver localhost, usa 127.0.0.1 para evitar o timeout de 2s IPv6 do Windows
@@ -172,7 +172,7 @@ class SandboxExecutor:
                 logger.info(f"   ⬇ [S3 Lazy-Load] Schema '{schema_name}' não encontrado no PostgreSQL local. Baixando scripts do S3...")
                 
                 s3_start = time.perf_counter()
-                files = self.s3.get_question_sql_files(question_id)
+                files = self.minio.get_question_sql_files(question_id)
                 schema_sql = files.get("schema", "")
                 data_sql = files.get("data", "")
                 answer_sql = files.get("answer", "")
@@ -228,7 +228,7 @@ class SandboxExecutor:
     def _load_official_hash_from_s3_and_sandbox(self, question_id: int, cur, schema_name: str):
         """Calcula o hash oficial a partir do answer.sql e armazena na memória do Worker."""
         try:
-            files = self.s3.get_question_sql_files(question_id)
+            files = self.minio.get_question_sql_files(question_id)
             answer_sql = files.get("answer", "")
             if answer_sql.strip():
                 cur.execute(sql.SQL("SET search_path TO {}, public;").format(sql.Identifier(schema_name)))

@@ -12,44 +12,56 @@ class Settings(BaseSettings):
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24 * 7  # 7 dias
 
-    # PostgreSQL RDS (Apenas Backend)
+    # PostgreSQL Principal (Container Docker/K8s substituindo RDS - Apenas Backend)
     DATABASE_URL: str = "postgresql+psycopg2://postgres:postgrespassword@127.0.0.1:15432/app_db"
     RDS_HOST: str = "127.0.0.1"
     RDS_PORT: int = 15432
     RDS_USER: str = "postgres"
     RDS_PASSWORD: str = "postgrespassword"
     RDS_DB_NAME: str = "app_db"
-    DB_POOL_SIZE: int = 3
-    DB_MAX_OVERFLOW: int = 2
-    DB_POOL_TIMEOUT: int = 5
+    DB_POOL_SIZE: int = 5
+    DB_MAX_OVERFLOW: int = 5
+    DB_POOL_TIMEOUT: int = 15
 
-    # PostgreSQL Local (Sandbox exclusivo do Worker)
+    # PostgreSQL Local (Sandbox exclusivo do Worker no mesmo Pod / Container)
     SANDBOX_DATABASE_URL: Optional[str] = None
 
     # Comunicação Interna Worker -> Backend
     BACKEND_INTERNAL_URL: str = "http://127.0.0.1:8000"
     INTERNAL_API_KEY: str = "sqlarena-internal-service-secret-key-32chars"
 
-    # Redis ElastiCache
+    # Redis Cache & Rate Limit (Container Docker/K8s)
     REDIS_URL: str = "redis://127.0.0.1:16379/0"
     REDIS_HOST: str = "127.0.0.1"
     REDIS_PORT: int = 16379
 
+    # MinIO Object Storage (Container Docker/K8s substituindo Amazon S3)
+    MINIO_ENDPOINT: Optional[str] = "http://127.0.0.1:9000"
+    MINIO_ACCESS_KEY: str = "minioadmin"
+    MINIO_SECRET_KEY: str = "minioadmin123"
+    S3_ENDPOINT_URL: Optional[str] = None
+    S3_BUCKET_NAME: str = "sqlarena-questions-bucket"
 
-    # AWS / Ministack (nulos por padrão para AWS real/produção; app/.env local sobrescreve para Ministack)
-    AWS_ENDPOINT_URL: Optional[str] = None
-    AWS_REGION: str = "us-east-1"
-    AWS_ACCESS_KEY_ID: Optional[str] = None
-    AWS_SECRET_ACCESS_KEY: Optional[str] = None
-
-    # SQS
+    # Apache Kafka (Container Docker/K8s substituindo Amazon SQS)
+    QUEUE_BACKEND: str = "kafka"
+    KAFKA_BOOTSTRAP_SERVERS: str = "127.0.0.1:9092"
+    KAFKA_TOPIC_NAME: str = "sqlarena-submissions-queue"
+    KAFKA_DLQ_TOPIC_NAME: str = "sqlarena-submissions-queue-dlq"
+    KAFKA_CONSUMER_GROUP: str = "sqlarena-workers-group"
     SQS_QUEUE_NAME: str = "sqlarena-submissions-queue"
     SQS_DLQ_NAME: str = "sqlarena-submissions-queue-dlq"
 
-    # S3 & DynamoDB
-    S3_BUCKET_NAME: str = "sqlarena-questions-bucket"
+    # AWS DynamoDB (Serviço NoSQL gerenciado na AWS)
+    AWS_ENDPOINT_URL: Optional[str] = None
+    DYNAMODB_ENDPOINT_URL: Optional[str] = None
+    AWS_REGION: str = "us-east-1"
+    AWS_ACCESS_KEY_ID: Optional[str] = None
+    AWS_SECRET_ACCESS_KEY: Optional[str] = None
+    AWS_SESSION_TOKEN: Optional[str] = None
     DYNAMO_SUBMISSIONS_TABLE: str = "sqlarena-submissions-log"
     DYNAMO_CRUD_TABLE: str = "sqlarena-crud-actions-log"
+    DYNAMODB_TABLE_NAME: str = "sqlarena-submissions-log"
+    DYNAMODB_CRUD_TABLE_NAME: str = "sqlarena-crud-actions-log"
 
     model_config = SettingsConfigDict(
         env_file=str(_env_file) if _env_file.exists() else None,

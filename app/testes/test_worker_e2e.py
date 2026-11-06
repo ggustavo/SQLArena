@@ -3,7 +3,7 @@ import time
 import pytest
 from app.worker.executor import SandboxExecutor
 from app.worker.main import SubmissionWorker
-from app.sqs.queue_manager import SQSQueueManager
+from app.kafka.kafka_manager import KafkaQueueManager
 from app.cache.redis_client import redis_client
 
 def test_executor_correct_query():
@@ -91,7 +91,7 @@ def test_worker_process_message_end_to_end():
 
 def main():
     """Simulação manual de envio para validação ad-hoc."""
-    manager = SQSQueueManager()
+    manager = KafkaQueueManager()
 
     # 1. Enviar submissao correta
     payload_ok = {

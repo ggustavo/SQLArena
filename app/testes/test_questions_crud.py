@@ -16,7 +16,7 @@ from app.api.deps import get_current_user, get_optional_current_user
 from app.database.models import Base, Category, Question, User, UserSolvedQuestion
 from app.database.session import get_db
 from app.database.validator import QuestionValidationError, QuestionValidator
-from app.s3.s3_manager import S3Manager
+from app.minio.minio_manager import MinioManager
 
 
 @pytest.fixture
@@ -42,7 +42,7 @@ def context(monkeypatch):
             "expected_hash": "a" * 64, "expected_columns": ["id"], "sample_tables": []
         }
         monkeypatch.setattr(questions, "redis_client", cache)
-        monkeypatch.setattr(questions, "s3_manager", storage)
+        monkeypatch.setattr(questions, "minio_manager", storage)
         monkeypatch.setattr(questions, "dynamo_manager", audit)
         monkeypatch.setattr(questions, "QuestionValidator", validator)
         monkeypatch.setattr(submissions, "redis_client", cache)
@@ -166,7 +166,7 @@ def test_missing_question(context, path, method):
 
 
 def test_s3_delete_uses_exact_directory():
-    manager = object.__new__(S3Manager)
+    manager = object.__new__(MinioManager)
     manager.bucket_name = "test"
     manager.list_files = Mock(return_value=["questions/1/schema.sql"])
     manager.s3 = Mock()

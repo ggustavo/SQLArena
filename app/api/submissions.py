@@ -9,12 +9,12 @@ from app.database.session import get_db
 from app.database.models import User, Question, UserSolvedQuestion
 from app.api.deps import get_current_user
 from app.cache.redis_client import redis_client
-from app.sqs.queue_manager import SQSQueueManager
+from app.kafka.kafka_manager import KafkaQueueManager
 from app.dynamodb.dynamo_manager import DynamoDBManager
 
 router = APIRouter(prefix="/submissions", tags=["Submissões"])
 
-sqs_manager = SQSQueueManager()
+kafka_manager = KafkaQueueManager()
 dynamo_manager = DynamoDBManager()
 
 class SubmitQueryRequest(BaseModel):
@@ -138,7 +138,7 @@ def submit_query(
 
     # 5. Publica na fila SQS
     try:
-        sqs_manager.send_message(
+        kafka_manager.send_message(
             payload={
                 "submission_id": submission_id,
                 "user_id": user.id,
@@ -285,7 +285,7 @@ def get_live_queue(
     """
     # 1. Estatísticas oficiais do Amazon SQS
     try:
-        stats = sqs_manager.get_queue_stats() or {}
+        stats = kafka_manager.get_queue_stats() or {}
     except Exception:
         stats = {}
 

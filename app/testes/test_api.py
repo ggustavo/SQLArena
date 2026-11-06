@@ -70,7 +70,7 @@ def test_submission_rate_limit():
     headers = {"Authorization": f"Bearer {token}"}
 
     from unittest.mock import patch
-    with patch("app.api.submissions.sqs_manager.send_message"):
+    with patch("app.api.submissions.kafka_manager.send_message"):
         # 1ª submissão: deve ser aceita (202)
         sub_res_1 = client.post("/api/submissions", headers=headers, json={
             "questionId": 1,

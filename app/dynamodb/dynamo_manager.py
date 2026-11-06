@@ -1,12 +1,14 @@
 """
 Módulo gerenciador do Amazon DynamoDB.
-Compatível com ambiente local (Ministack) e nuvem (AWS real).
+Mantém o armazenamento e consulta no serviço NoSQL da AWS (Amazon DynamoDB),
+com suporte transparente a credenciais temporárias AWS Academy (AWS_SESSION_TOKEN),
+IAM Roles de EC2/EKS (LabRole) ou endpoint local para testes offline.
+
 Responsável por duas tabelas de log imutável:
 1. Histórico detalhado de execuções, erros do PostgreSQL e resultados das
    submissões dos alunos (tabela sqlarena-submissions-log).
-2. Log de ações de CRUD da aplicação — create/update/delete de exercícios,
-   indicando tipo da ação, dados manipulados e hora da ação, conforme o
-   Requisito 5 do enunciado (tabela sqlarena-crud-actions-log).
+2. Log de ações de CRUD da aplicação — create/update/delete de exercícios e usuários,
+   indicando tipo da ação, dados manipulados e hora da ação (tabela sqlarena-crud-actions-log).
 """
 
 from datetime import datetime, timezone
@@ -51,22 +53,34 @@ class DynamoDBManager:
         endpoint_url: Optional[str] = None,
         region_name: Optional[str] = None,
     ):
-        self.table_name = table_name or os.getenv("DYNAMODB_TABLE_NAME", "sqlarena-submissions-log")
+        self.table_name = (
+            table_name
+            or os.getenv("DYNAMODB_TABLE_NAME")
+            or os.getenv("DYNAMO_SUBMISSIONS_TABLE")
+            or "sqlarena-submissions-log"
+        )
+        self.crud_table_name = (
+            os.getenv("DYNAMODB_CRUD_TABLE_NAME")
+            or os.getenv("DYNAMO_CRUD_TABLE")
+            or "sqlarena-crud-actions-log"
+        )
         self.region_name = region_name or os.getenv("AWS_REGION", "us-east-1")
-        raw_endpoint = endpoint_url if endpoint_url is not None else os.getenv("AWS_ENDPOINT_URL")
+
+        # Prioriza DYNAMODB_ENDPOINT_URL; se vazio na AWS, usa o serviço oficial AWS DynamoDB na nuvem
+        raw_endpoint = (
+            endpoint_url
+            if endpoint_url is not None
+            else (os.getenv("DYNAMODB_ENDPOINT_URL") or os.getenv("AWS_ENDPOINT_URL"))
+        )
         self.endpoint_url = raw_endpoint.strip() if raw_endpoint and raw_endpoint.strip() else None
 
         aws_access_key = os.getenv("AWS_ACCESS_KEY_ID")
         aws_secret_key = os.getenv("AWS_SECRET_ACCESS_KEY")
-        if aws_access_key and aws_access_key.strip():
-            aws_access_key = aws_access_key.strip()
-        else:
-            aws_access_key = None
+        aws_session_token = os.getenv("AWS_SESSION_TOKEN")
 
-        if aws_secret_key and aws_secret_key.strip():
-            aws_secret_key = aws_secret_key.strip()
-        else:
-            aws_secret_key = None
+        aws_access_key = aws_access_key.strip() if aws_access_key and aws_access_key.strip() else None
+        aws_secret_key = aws_secret_key.strip() if aws_secret_key and aws_secret_key.strip() else None
+        aws_session_token = aws_session_token.strip() if aws_session_token and aws_session_token.strip() else None
 
         client_kwargs: Dict[str, Any] = {
             "region_name": self.region_name,
@@ -74,14 +88,13 @@ class DynamoDBManager:
         if aws_access_key and aws_secret_key:
             client_kwargs["aws_access_key_id"] = aws_access_key
             client_kwargs["aws_secret_access_key"] = aws_secret_key
+            if aws_session_token:
+                client_kwargs["aws_session_token"] = aws_session_token
 
         if self.endpoint_url:
             client_kwargs["endpoint_url"] = self.endpoint_url
-
-        #   Tabela separada para o log de ações de CRUD
-        #   Fica separada da tabela de submissões porque a chave de partição e os padrões de consulta
-        #   são diferentes (aqui é por entidade, lá é por submission_id/aluno)
-        self.crud_table_name = os.getenv("DYNAMODB_CRUD_TABLE_NAME", "sqlarena-crud-actions-log")
+            client_kwargs.setdefault("aws_access_key_id", "test")
+            client_kwargs.setdefault("aws_secret_access_key", "test")
 
         self.client = boto3.client("dynamodb", **client_kwargs)
         self.resource = boto3.resource("dynamodb", **client_kwargs)
@@ -132,9 +145,13 @@ class DynamoDBManager:
                             }
                         ],
                     )
+                    waiter = self.client.get_waiter("table_exists")
+                    waiter.wait(TableName=self.table_name, WaiterConfig={"Delay": 2, "MaxAttempts": 15})
                     logger.info(f"Tabela '{self.table_name}' criada com sucesso.")
                     return True
                 except ClientError as create_err:
+                    if create_err.response.get("Error", {}).get("Code") == "ResourceInUseException":
+                        return True
                     logger.error(f"Erro ao criar tabela '{self.table_name}': {create_err}")
                     raise
             logger.error(f"Erro ao verificar tabela '{self.table_name}': {e}")
@@ -143,8 +160,7 @@ class DynamoDBManager:
     def ensure_crud_table_exists(self) -> bool:
         """
         Verifica se a tabela de log de ações de CRUD existe; caso contrário, cria com
-        chave primária action_id e um GSI para consultar o histórico por entidade
-        (ex: todas as ações sobre o exercício X, em ordem cronológica).
+        chave primária action_id e um GSI para consultar o histórico por entidade.
         """
         try:
             self.client.describe_table(TableName=self.crud_table_name)
@@ -176,9 +192,13 @@ class DynamoDBManager:
                             }
                         ],
                     )
+                    waiter = self.client.get_waiter("table_exists")
+                    waiter.wait(TableName=self.crud_table_name, WaiterConfig={"Delay": 2, "MaxAttempts": 15})
                     logger.info(f"Tabela '{self.crud_table_name}' criada com sucesso.")
                     return True
                 except ClientError as create_err:
+                    if create_err.response.get("Error", {}).get("Code") == "ResourceInUseException":
+                        return True
                     logger.error(f"Erro ao criar tabela '{self.crud_table_name}': {create_err}")
                     raise
             logger.error(f"Erro ao verificar tabela '{self.crud_table_name}': {e}")
@@ -204,9 +224,6 @@ class DynamoDBManager:
     ) -> Dict[str, Any]:
         """
         Grava um registro completo e imutável de execução da submissão no DynamoDB.
-        Atende à Seção 8 e 9 dos requisitos:
-        "Todas as execuções, acertadas ou não, e os respectivos logs nativos de erro do PostgreSQL...
-         são salvas no AWS DynamoDB."
         """
         now_iso = created_at or datetime.now(timezone.utc).isoformat()
 
@@ -215,7 +232,7 @@ class DynamoDBManager:
             "student_id": str(student_id),
             "question_id": str(question_id),
             "query": query,
-            "status": status,  # ex: SUCCESS, WRONG_ANSWER, ERROR, TIMEOUT
+            "status": status,
             "is_correct": is_correct,
             "created_at": now_iso,
         }
@@ -253,7 +270,6 @@ class DynamoDBManager:
     ) -> Dict[str, Any]:
         """
         Atualiza o status de uma submissão existente (ex: de PENDING para SUCCESS/ERROR).
-        Útil no fluxo assíncrono onde a API registra PENDING e o Worker conclui.
         """
         sub_id = str(submission_id)
         update_expr_parts = ["#st = :status"]
@@ -403,8 +419,7 @@ class DynamoDBManager:
             raise
 
     # ----------------------------------------------------------------------
-    # Log de Ações de CRUD (Requisito 5: toda ação de CRUD da aplicação deve
-    # ser logada, indicando tipo da ação, dados manipulados e hora da ação)
+    # Log de Ações de CRUD
     # ----------------------------------------------------------------------
 
     def log_crud_action(
@@ -419,8 +434,7 @@ class DynamoDBManager:
         created_at: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
-        Registra de forma imutável uma ação de CRUD sobre qualquer entidade da aplicação
-        (ex: exercício, usuário). Atende ao Requisito 5 do enunciado.
+        Registra de forma imutável uma ação de CRUD sobre qualquer entidade da aplicação.
         """
         action_id = action_id or f"log_{uuid.uuid4().hex[:16]}"
         now_iso = created_at or datetime.now(timezone.utc).isoformat()
@@ -443,6 +457,10 @@ class DynamoDBManager:
             logger.info(f"Ação '{action_type}' sobre {entity}#{entity_id} logada (action_id={action_id}).")
             return item
         except ClientError as e:
+            if e.response.get("Error", {}).get("Code") == "ResourceNotFoundException":
+                self.ensure_crud_table_exists()
+                self.crud_table.put_item(Item=item)
+                return item
             logger.error(f"Erro ao gravar log de CRUD ({action_type} em {entity}#{entity_id}): {e}")
             raise
 
@@ -452,9 +470,7 @@ class DynamoDBManager:
         limit: int = 20,
     ) -> List[Dict[str, Any]]:
         """
-        Lista todas as ações de CRUD registradas para uma entidade específica
-        (ex: todo o histórico de alterações do exercício #10), mais recentes primeiro,
-        via GSI EntityIndex.
+        Lista todas as ações de CRUD registradas para uma entidade específica.
         """
         try:
             response = self.crud_table.query(
@@ -471,8 +487,7 @@ class DynamoDBManager:
 
     def list_crud_actions(self, limit: int = 50) -> List[Dict[str, Any]]:
         """
-        Retorna as ações de CRUD mais recentes (Scan limitado), ideal para um painel
-        administrativo de auditoria.
+        Retorna as ações de CRUD mais recentes (Scan limitado).
         """
         try:
             response = self.crud_table.scan(Limit=limit)

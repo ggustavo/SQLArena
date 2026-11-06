@@ -1,101 +1,66 @@
-# Application Load Balancer
-output "alb_dns_name" {
-  description = "DNS público do Application Load Balancer (Ponto de entrada da API)"
-  value       = aws_lb.api_alb.dns_name
+# ==============================================================================
+# Outputs do Terraform (Compatível com Modo 1 EKS, Modo 2 EC2 e Local)
+# ==============================================================================
+
+output "deploy_mode_ativo" {
+  description = "Modo de implantação provisionado"
+  value       = var.deploy_mode
 }
 
-output "alb_arn" {
-  description = "ARN do Application Load Balancer"
-  value       = aws_lb.api_alb.arn
-}
-
-output "api_target_group_arn" {
-  description = "ARN do Target Group da API FastAPI"
-  value       = aws_lb_target_group.api_tg.arn
-}
-
-# Auto Scaling Groups
-output "asg_web_name" {
-  description = "Nome do Auto Scaling Group da Camada Web (FastAPI)"
-  value       = aws_autoscaling_group.web_asg.name
-}
-
-output "asg_worker_name" {
-  description = "Nome do Auto Scaling Group dos Workers de Execução em Sandbox"
-  value       = aws_autoscaling_group.worker_asg.name
-}
-
-# RDS PostgreSQL
-output "rds_endpoint" {
-  description = "Endpoint de conexão com o banco RDS"
-  value       = aws_db_instance.postgres.endpoint
-}
-
-output "rds_address" {
-  description = "Host / endereço do banco RDS"
-  value       = aws_db_instance.postgres.address
-}
-
-output "rds_port" {
-  description = "Porta do banco RDS"
-  value       = aws_db_instance.postgres.port
-}
-
-# ElastiCache Redis
-output "elasticache_cluster_id" {
-  description = "Identificador do cluster ElastiCache Redis"
-  value       = aws_elasticache_cluster.redis.cluster_id
-}
-
-output "elasticache_port" {
-  description = "Porta de conexão do Redis"
-  value       = aws_elasticache_cluster.redis.port
-}
-
-# SQS Queues
-output "sqs_queue_url" {
-  description = "URL da fila principal do SQS"
-  value       = aws_sqs_queue.submissions_queue.url
-}
-
-output "sqs_queue_arn" {
-  description = "ARN da fila principal do SQS"
-  value       = aws_sqs_queue.submissions_queue.arn
-}
-
-output "sqs_dlq_url" {
-  description = "URL da fila Dead Letter Queue (DLQ)"
-  value       = aws_sqs_queue.submissions_dlq.url
-}
-
-# S3 Bucket
-output "s3_bucket_name" {
-  description = "Nome do bucket S3 das questões"
-  value       = var.s3_bucket_name
-}
-
-output "s3_bucket_arn" {
-  description = "ARN do bucket S3 das questões"
-  value       = "arn:aws:s3:::${var.s3_bucket_name}"
-}
-
-# DynamoDB Tables
+# --- Outputs do Amazon DynamoDB (Sempre ativos) ---
 output "dynamodb_table_name" {
   description = "Nome da tabela DynamoDB de logs de submissão"
-  value       = aws_dynamodb_table.submissions_log.name
-}
-
-output "dynamodb_table_arn" {
-  description = "ARN da tabela DynamoDB de logs de submissão"
-  value       = aws_dynamodb_table.submissions_log.arn
+  value       = module.dynamodb.submissions_table_name
 }
 
 output "dynamodb_crud_table_name" {
   description = "Nome da tabela DynamoDB de log de ações de CRUD"
-  value       = aws_dynamodb_table.crud_actions_log.name
+  value       = module.dynamodb.crud_table_name
 }
 
-output "dynamodb_crud_table_arn" {
-  description = "ARN da tabela DynamoDB de log de ações de CRUD"
-  value       = aws_dynamodb_table.crud_actions_log.arn
+# --- Outputs do Modo 1: 100% Amazon EKS + DynamoDB ---
+output "modo1_eks_cluster_name" {
+  description = "[Modo 1 - EKS] Nome do cluster Kubernetes na AWS"
+  value       = var.deploy_mode == "eks" ? module.eks_mode[0].cluster_name : null
+}
+
+output "modo1_eks_cluster_endpoint" {
+  description = "[Modo 1 - EKS] Endpoint da API do cluster EKS"
+  value       = var.deploy_mode == "eks" ? module.eks_mode[0].cluster_endpoint : null
+}
+
+output "modo1_eks_kubeconfig_command" {
+  description = "[Modo 1 - EKS] Comando para conectar seu kubectl local ao cluster EKS na AWS"
+  value       = var.deploy_mode == "eks" ? "aws eks update-kubeconfig --region ${var.aws_region} --name ${module.eks_mode[0].cluster_name}" : null
+}
+
+output "modo1_ecr_backend_url" {
+  description = "[Modo 1 - EKS] Repositório ECR para push da imagem sqlarena-backend"
+  value       = var.deploy_mode == "eks" ? module.eks_mode[0].ecr_backend_repository_url : null
+}
+
+output "modo1_ecr_frontend_url" {
+  description = "[Modo 1 - EKS] Repositório ECR para push da imagem sqlarena-frontend"
+  value       = var.deploy_mode == "eks" ? module.eks_mode[0].ecr_frontend_repository_url : null
+}
+
+# --- Outputs do Modo 2: 1 EC2 com Docker Compose + DynamoDB ---
+output "modo2_ec2_public_ip" {
+  description = "[Modo 2 - EC2 Compose] IP Público da instância EC2 única"
+  value       = var.deploy_mode == "ec2_compose" ? module.ec2_compose_mode[0].public_ip : null
+}
+
+output "modo2_frontend_url" {
+  description = "[Modo 2 - EC2 Compose] URL pública da Plataforma SQLArena (Frontend + API)"
+  value       = var.deploy_mode == "ec2_compose" ? module.ec2_compose_mode[0].frontend_url : null
+}
+
+output "modo2_swagger_url" {
+  description = "[Modo 2 - EC2 Compose] URL do Swagger UI (/docs)"
+  value       = var.deploy_mode == "ec2_compose" ? module.ec2_compose_mode[0].swagger_docs_url : null
+}
+
+output "modo2_minio_console_url" {
+  description = "[Modo 2 - EC2 Compose] URL do Console Web do MinIO (porta 9001)"
+  value       = var.deploy_mode == "ec2_compose" ? module.ec2_compose_mode[0].minio_console_url : null
 }

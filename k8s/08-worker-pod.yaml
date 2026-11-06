@@ -1,0 +1,141 @@
+# ==============================================================================
+# 08 - POD 2: Camada Worker (Worker Python + PostgreSQL Sandbox no mesmo Pod!)
+# ==============================================================================
+# Substitui a antiga Golden AMI 2 (Worker ASG).
+# Usa o padrão Sidecar do Kubernetes: cada Pod do Deployment 'sqlarena-worker'
+# possui dois containers compartilhando a mesma interface de rede (127.0.0.1):
+# 1. Container 'postgres-sandbox' (PostgreSQL 16 isolado e descartável em 127.0.0.1:5432)
+# 2. Container 'worker'           (Consome Kafka, faz lazy-load do MinIO e executa SQL local)
+#
+# Quando o Kubernetes escala este Deployment (ex: de 1 para 4 réplicas via HPA),
+# cada novo Pod nasce com seu próprio PostgreSQL Sandbox dedicado!
+# ==============================================================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: sqlarena-worker
+  labels:
+    app: sqlarena
+    tier: worker
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: sqlarena
+      tier: worker
+  template:
+    metadata:
+      labels:
+        app: sqlarena
+        tier: worker
+    spec:
+      containers:
+        # ----------------------------------------------------------------------
+        # Container 1 (Sidecar): PostgreSQL 16 Sandbox Local do Pod
+        # ----------------------------------------------------------------------
+        - name: postgres-sandbox
+          image: postgres:16-alpine
+          ports:
+            - containerPort: 5432
+              name: pg-sandbox
+          env:
+            - name: POSTGRES_DB
+              value: "sandbox_db"
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: sqlarena-secrets
+                  key: SANDBOX_POSTGRES_USER
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: sqlarena-secrets
+                  key: SANDBOX_POSTGRES_PASSWORD
+          volumeMounts:
+            - name: sandbox-ephemeral-data
+              mountPath: /var/lib/postgresql/data
+          readinessProbe:
+            exec:
+              command: ["sh", "-c", "pg_isready -U $POSTGRES_USER -d $POSTGRES_DB"]
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          livenessProbe:
+            exec:
+              command: ["sh", "-c", "pg_isready -U $POSTGRES_USER -d $POSTGRES_DB"]
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: "150m"
+              memory: "256Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
+
+        # ----------------------------------------------------------------------
+        # Container 2: Worker Assíncrono (Kafka + MinIO + 127.0.0.1:5432)
+        # ----------------------------------------------------------------------
+        - name: worker
+          image: sqlarena-backend:latest
+          imagePullPolicy: IfNotPresent
+          command: ["python", "app/worker/main.py"]
+          envFrom:
+            - configMapRef:
+                name: sqlarena-config
+          env:
+            - name: SERVICE_ROLE
+              value: "worker"
+            - name: RUN_SEED
+              value: "false"
+            - name: SANDBOX_DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: sqlarena-secrets
+                  key: SANDBOX_DATABASE_URL
+            - name: INTERNAL_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: sqlarena-secrets
+                  key: INTERNAL_API_KEY
+            - name: MINIO_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: sqlarena-secrets
+                  key: MINIO_ROOT_USER
+            - name: MINIO_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: sqlarena-secrets
+                  key: MINIO_ROOT_PASSWORD
+          resources:
+            requests:
+              cpu: "150m"
+              memory: "256Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
+
+      volumes:
+        # Volume efêmero isolado por Pod: se o Pod reiniciar ou escalar, a Sandbox é limpa
+        - name: sandbox-ephemeral-data
+          emptyDir: {}
+---
+# Service ClusterIP para descoberta e monitoramento interno dos Pods de Worker
+apiVersion: v1
+kind: Service
+metadata:
+  name: sqlarena-worker-clusterip
+  labels:
+    app: sqlarena
+    tier: worker
+spec:
+  type: ClusterIP
+  clusterIP: None
+  selector:
+    app: sqlarena
+    tier: worker
+  ports:
+    - name: pg-sandbox
+      port: 5432
+      targetPort: 5432
+      protocol: TCP
