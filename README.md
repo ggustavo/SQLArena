@@ -87,13 +87,14 @@ A primeira etapa consiste em definir se a aplicação utilizará o **Amazon Dyna
 
 Primeiro, crie o arquivo `.env` na raiz do projeto copiando o modelo de exemplo:
 
-```bash
-# macOS / Linux:
-cp .env.example .env
-
-# Windows (PowerShell):
-Copy-Item .env.example .env
-```
+* **No macOS / Linux:**
+  ```bash
+  cp .env.example .env
+  ```
+* **No Windows (PowerShell):**
+  ```powershell
+  Copy-Item .env.example .env
+  ```
 
 Agora, escolha **uma** das duas opções a seguir para o DynamoDB:
 
@@ -103,19 +104,29 @@ Agora, escolha **uma** das duas opções a seguir para o DynamoDB:
 
 1. **Provisionar as tabelas no DynamoDB via Terraform:**
    * Acesse o diretório de variáveis do Terraform e copie o modelo:
-     ```bash
-     # macOS / Linux:
-     cd terraform/envs && cp credentials.tfvars.example credentials.tfvars
-
-     # Windows (PowerShell):
-     cd terraform\envs; Copy-Item credentials.tfvars.example credentials.tfvars
-     ```
+     * No macOS / Linux:
+       ```bash
+       cd terraform/envs && cp credentials.tfvars.example credentials.tfvars
+       ```
+     * No Windows (PowerShell):
+       ```powershell
+       cd terraform\envs; Copy-Item credentials.tfvars.example credentials.tfvars
+       ```
    * Abra o arquivo `credentials.tfvars` e insira suas credenciais ativas da AWS (`aws_access_key`, `aws_secret_key` e `aws_session_token`).
-   * Retorne à pasta `terraform` e aplique o plano:
+   * Retorne à pasta `terraform`:
      ```bash
      cd ..
+     ```
+   * Inicialize os plugins do Terraform:
+     ```bash
      terraform init
+     ```
+   * Aplique a criação das tabelas na AWS:
+     ```bash
      terraform apply -var-file="envs/credentials.tfvars" -auto-approve
+     ```
+   * Retorne à raiz do projeto:
+     ```bash
      cd ..
      ```
      *(As tabelas `sqlarena-submissions-log` e `sqlarena-crud-actions-log` serão criadas na AWS).*
@@ -201,15 +212,20 @@ Todos os containers devem exibir o status **`Up (healthy)`** ou **`Up`**.
   docker compose down
   ```
 * **Resetar completamente (apagar containers, redes e a pasta de dados `./data/`):**
-  ```bash
-  # macOS / Linux:
-  docker compose down -v
-  rm -rf data
-
-  # Windows (PowerShell):
-  docker compose down -v
-  Remove-Item -Recurse -Force data
-  ```
+  * No macOS / Linux:
+    ```bash
+    docker compose down -v
+    ```
+    ```bash
+    rm -rf data
+    ```
+  * No Windows (PowerShell):
+    ```powershell
+    docker compose down -v
+    ```
+    ```powershell
+    Remove-Item -Recurse -Force data
+    ```
 
 ---
 
@@ -267,31 +283,42 @@ flowchart TB
 
 Você **não precisa editar nenhum arquivo YAML do Kubernetes**. O Kubernetes lê diretamente o arquivo `.env` configurado no **Passo 1**:
 
-```bash
-# 1. Carrega todos os segredos do .env automaticamente no cluster:
-kubectl create secret generic sqlarena-secrets --from-env-file=.env --dry-run=client -o yaml | kubectl apply -f -
+* **Passo A:** Carregar todos os segredos do `.env` automaticamente no cluster:
+  ```bash
+  kubectl create secret generic sqlarena-secrets --from-env-file=.env --dry-run=client -o yaml | kubectl apply -f -
+  ```
 
-# 2. Inicializa todos os serviços, Pods e autoscaling (HPA):
-kubectl apply -f k8s/
-```
+* **Passo B:** Inicializar todos os serviços, Pods e autoscaling (HPA):
+  ```bash
+  kubectl apply -f k8s/
+  ```
 
 #### 2. Verificar Pods e Services:
-```bash
-# Verifique se todos os Pods estão 'Running' (observe READY 2/2 nos Pods Web e Worker):
-kubectl get pods
+* Verifique se todos os Pods estão 'Running' (observe READY 2/2 nos Pods Web e Worker):
+  ```bash
+  kubectl get pods
+  ```
 
-# Listar os Services (NodePort e ClusterIP):
-kubectl get services
+* Listar os Services (NodePort e ClusterIP):
+  ```bash
+  kubectl get services
+  ```
 
-# Inspecionar o auto-scaling dos Pods (HPA):
-kubectl get hpa
-```
+* Inspecionar o auto-scaling dos Pods (HPA):
+  ```bash
+  kubectl get hpa
+  ```
 
 #### 3. Para encerrar o Kubernetes:
-```bash
-kubectl delete -f k8s/
-kubectl delete secret sqlarena-secrets
-```
+* Remover os recursos do cluster:
+  ```bash
+  kubectl delete -f k8s/
+  ```
+
+* Remover o secret gerado:
+  ```bash
+  kubectl delete secret sqlarena-secrets
+  ```
 
 ---
 
@@ -324,11 +351,18 @@ Ao encerrar os testes:
 
 1. **Se utilizou a AWS Real (Terraform):**
    Para evitar custos na sua conta AWS, destrua as tabelas do DynamoDB:
-   ```bash
-   cd terraform
-   terraform destroy -var-file="envs/credentials.tfvars" -auto-approve
-   cd ..
-   ```
+   * Acesse a pasta terraform:
+     ```bash
+     cd terraform
+     ```
+   * Destrua as tabelas:
+     ```bash
+     terraform destroy -var-file="envs/credentials.tfvars" -auto-approve
+     ```
+   * Retorne à raiz:
+     ```bash
+     cd ..
+     ```
 2. **Se utilizou o Docker Compose:**
    ```bash
    docker compose down -v
@@ -338,10 +372,14 @@ Ao encerrar os testes:
    docker compose -f ministack/docker-compose.yml down -v
    ```
 4. **Se utilizou o Kubernetes:**
-   ```bash
-   kubectl delete -f k8s/
-   kubectl delete secret sqlarena-secrets
-   ```
+   * Remova os recursos do cluster:
+     ```bash
+     kubectl delete -f k8s/
+     ```
+   * Remova o secret:
+     ```bash
+     kubectl delete secret sqlarena-secrets
+     ```
 
 ---
 
@@ -366,10 +404,14 @@ Os manifestos da pasta `k8s/` utilizam exclusivamente a ferramenta padrão **`ku
 5. Aguarde o indicador do Kubernetes no rodapé do Docker Desktop ficar verde.
 
 ### 🐧 Linux (com K3s ou Docker Desktop)
-* **Opção K3s (1 comando — Super leve):**
-  ```bash
-  curl -sfL https://get.k3s.io | sh -
-  export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
-  ```
+* **Opção K3s (Super leve):**
+  * Instalar o K3s:
+    ```bash
+    curl -sfL https://get.k3s.io | sh -
+    ```
+  * Exportar o kubeconfig:
+    ```bash
+    export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
+    ```
 * **Opção Docker Desktop for Linux:**
   Mesmo procedimento do Windows (Settings -> Kubernetes -> Enable).
