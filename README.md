@@ -52,13 +52,14 @@ SQLArena/
 │   └── src/                    # SPA React 19, Tailwind CSS v4 e Monaco Editor
 ├── k8s/                        # Manifestos Kubernetes Locais (100% agnósticos)
 │   ├── 01-configmap.yaml       # Configurações não-sensíveis dos serviços do cluster
-│   ├── 03-postgres-main.yaml   # Deployment + PVC + Service ClusterIP do Postgres Principal
+│   ├── 03-postgres.yaml        # Deployment + PVC + Service ClusterIP do Postgres Principal
 │   ├── 04-redis.yaml           # Deployment + Service ClusterIP do Redis
 │   ├── 05-minio.yaml           # Deployment + PVC + Service ClusterIP e NodePort (30901) do MinIO
 │   ├── 06-kafka.yaml           # Deployment + Service ClusterIP do Apache Kafka (KRaft)
-│   ├── 07-web-pod.yaml         # POD 1 (Frontend + Backend) + Services NodePort (30080) e ClusterIP
-│   ├── 08-worker-pod.yaml      # POD 2 (Worker + Postgres Sandbox Sidecar) + Service ClusterIP
-│   └── 09-hpa.yaml             # HorizontalPodAutoscaler (HPA) para escalabilidade dos Pods
+│   ├── 07-web.yaml             # POD 1 (Frontend + Backend) + Services NodePort (30080) e ClusterIP
+│   ├── 08-worker.yaml          # POD 2 (Worker + Postgres Sandbox Sidecar) + Service ClusterIP
+│   ├── 09-hpa.yaml             # HorizontalPodAutoscaler (HPA) para escalabilidade dos Pods
+│   └── README.md               # Guia didático completo sobre Pods, Deployments e Services (ClusterIP vs NodePort)
 ├── terraform/                  # Infraestrutura como Código para o DynamoDB
 │   ├── modules/dynamodb/       # Módulo com as tabelas de submissões e auditoria CRUD
 │   ├── envs/credentials.tfvars.example # Modelo para credenciais da AWS
@@ -276,8 +277,10 @@ flowchart TB
     BE <-->|"boto3 (AWS Secrets)"| Dynamo
 ```
 
-* **POD 1 — `sqlarena-web` (`k8s/07-web-pod.yaml`):** Co-localiza o **Frontend** e o **Backend** no mesmo Pod. O Nginx atende na porta `80` e repassa requisições `/api` via loopback interno (`http://127.0.0.1:8000`). Exposto externamente via Service **NodePort** (`30080`) e internamente via Service **ClusterIP**.
-* **POD 2 — `sqlarena-worker` (`k8s/08-worker-pod.yaml`):** Padrão **Sidecar** co-localizando o **Worker Python** e o **PostgreSQL Sandbox** isolado (`127.0.0.1:5432`). Ao escalar via HPA, cada réplica ganha seu próprio sandbox independente.
+* **POD 1 — `sqlarena-web` (`k8s/07-web.yaml`):** Co-localiza o **Frontend** e o **Backend** no mesmo Pod. O Nginx atende na porta `80` e repassa requisições `/api` via loopback interno (`http://127.0.0.1:8000`). Exposto externamente via Service **NodePort** (`30080`) e internamente via Service **ClusterIP**.
+* **POD 2 — `sqlarena-worker` (`k8s/08-worker.yaml`):** Padrão **Sidecar** co-localizando o **Worker Python** e o **PostgreSQL Sandbox** isolado (`127.0.0.1:5432`). Ao escalar via HPA, cada réplica ganha seu próprio sandbox independente.
+
+> 📖 **Quer entender a fundo como funciona Pods, Deployments e Services (ClusterIP vs NodePort)?** Consulte nosso guia didático em [k8s/README.md](k8s/README.md).
 
 #### 1. Aplicar a aplicação com `kubectl` (Leitura direta do `.env`):
 
