@@ -120,7 +120,33 @@ Através do **NodePort**!
 
 ---
 
-## 🗺️ 7. Visão Geral Integrada: Como tudo se conecta
+## 💾 7. Como funcionam os Volumes: Persistentes (PVC) vs Temporários (emptyDir)
+
+No Kubernetes, existem duas necessidades de armazenamento completamente opostas: dados que **nunca podem sumir** e dados que **devem ser descartados** após o teste.
+
+### 1. Volumes Persistentes (`PersistentVolumeClaim` / `PVC`)
+* **O que é:** Um disco virtual persistente que é reservado no cluster e "anexado" ao Pod.
+* **Ciclo de vida:** Sobrevive à morte do Pod! Se o Pod travar, reiniciar ou for atualizado, o novo Pod se reconecta exatamente ao mesmo disco sem perder um único byte.
+* **Onde usamos no SQLArena:**
+  * [`03-postgres.yaml`](03-postgres.yaml) (`postgres-pvc`): Guarda os dados dos usuários, questões, pontuações (+10 XP) e tabelas relacionais.
+  * [`05-minio.yaml`](05-minio.yaml) (`minio-pvc`): Guarda os arquivos físicos das questões (`schema.sql`, `data.sql`, `answer.sql`).
+
+### 2. Volumes Temporários / Efêmeros (`emptyDir: {}`)
+* **O que é:** É exatamente o volume temporário atrelado ao **ciclo de vida do Pod**!
+* **Ciclo de vida:** 
+  1. Quando o Pod do Worker é criado, o Kubernetes cria uma pasta vazia temporária (`emptyDir`).
+  2. O container do **Postgres Sandbox** monta esse volume e roda a validação das queries enviadas pelos alunos.
+  3. **Se o Pod morrer, reiniciar ou se o HPA diminuir o número de réplicas, esse volume é DELETADO E PURGADO do disco automaticamente!**
+* **Onde usamos no SQLArena:**
+  * [`08-worker.yaml`](08-worker.yaml) (`sandbox-ephemeral-data: emptyDir: {}`).
+* **Por que essa estratégia é essencial no Sandbox?**
+  * **Segurança e Isolamento:** Cada réplica do Worker tem a sua própria Sandbox descartável. Uma query maliciosa ou pesada de um aluno nunca "suja" o banco de outro.
+  * **Limpeza Automática:** Não acumula lixo no disco do servidor com milhares de execuções de testes antigos.
+  * **Escalabilidade Perfeita:** Se o HPA subir de 1 para 5 réplicas de Workers, cada Pod nasce instantaneamente com seu próprio `emptyDir` paralelo e isolado.
+
+---
+
+## 🗺️ 8. Visão Geral Integrada: Como tudo se conecta
 
 ```mermaid
 flowchart TD
@@ -179,7 +205,7 @@ flowchart TD
 
 ---
 
-## 📊 8. Tabela Resumo Rápido
+## 📊 9. Tabela Resumo Rápido
 
 | Objeto Kubernetes | O que é? | Para que serve no SQLArena? |
 | :--- | :--- | :--- |
@@ -187,6 +213,8 @@ flowchart TD
 | **Deployment** | Gerente de Pods | Garante que os Pods estejam sempre ativos, reiniciando-os se caírem e controlando réplicas. |
 | **Service ClusterIP** | Rede interna fixa | Endereço interno que nunca muda. Usado para o Worker chamar o Backend (`:8000`) e para o Backend chamar o Postgres (`:5432`). |
 | **Service NodePort** | Porta de entrada externa | Abre uma porta física (`30080`) no computador para permitir que você acesse o frontend pelo navegador. |
+| **PVC (PersistentVolumeClaim)** | Disco persistente | Armazenamento permanente para o Postgres Principal (`03-postgres.yaml`) e MinIO (`05-minio.yaml`). |
+| **emptyDir (Volume Efêmero)** | Disco temporário | Volume atrelado ao ciclo de vida do Pod do Worker (`08-worker.yaml`). Criado quando o Pod nasce e apagado quando ele morre. |
 | **ConfigMap** | Configurações comuns | Guarda variáveis de ambiente não-sensíveis (portas, nomes de filas, tópicos). |
 | **Secret** | Credenciais seguras | Guarda senhas e chaves criptografadas (carregadas automaticamente do seu arquivo `.env`). |
 | **HPA** | Autoscaler de Pods | Monitora o uso de CPU e memória e cria réplicas automáticas do Worker quando a carga de submissões aumenta. |
