@@ -24,12 +24,12 @@ def test_full_student_frontend_flow():
     DynamoDBManager().ensure_tables_exist()
     # 1. Login
     login_resp = client.post("/api/auth/login", json={
-        "email": "gustavo@sqlarena.com",
+        "email": "aluno@sqlarena.com",
         "password": "123" # ou 123456
     })
     if login_resp.status_code != 200:
         login_resp = client.post("/api/auth/login", json={
-            "email": "gustavo@sqlarena.com",
+            "email": "aluno@sqlarena.com",
             "password": "123456"
         })
     assert login_resp.status_code == 200

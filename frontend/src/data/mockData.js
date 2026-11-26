@@ -1,8 +1,8 @@
 export const MOCK_ACCOUNTS = {
-  "gustavo@sqlarena.com": {
+  "aluno@sqlarena.com": {
     id: "user_101",
-    name: "Gustavo Moraes",
-    email: "gustavo@sqlarena.com",
+    name: "Aluno",
+    email: "aluno@sqlarena.com",
     role: "STUDENT",
     score: 0,
     solvedCount: 0,

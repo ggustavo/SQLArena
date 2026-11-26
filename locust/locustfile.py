@@ -146,7 +146,7 @@ class SQLArenaStudent(HttpUser):
                         resp.success()
                     else:
                         # Fallback no aluno semente padrão
-                        fb_payload = {"email": "gustavo@sqlarena.com", "password": "123456"}
+                        fb_payload = {"email": "aluno@sqlarena.com", "password": "123456"}
                         with self.client.post("/api/auth/login", json=fb_payload, catch_response=True, name="/api/auth/login [FALLBACK]") as fb_resp:
                             if fb_resp.status_code == 200:
                                 data = fb_resp.json()

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { getQuestions, createQuestion, deleteQuestion, publishQuestion } from '../services/questionService';
+import { getQuestions, createQuestion, deleteQuestion, publishQuestion, downloadQuestionFile } from '../services/questionService';
 import { getCategories } from '../services/categoryService';
 import {
   PlusCircle,
@@ -17,6 +17,7 @@ import {
   EyeOff,
   X,
   FileText,
+  Download,
 } from 'lucide-react';
 
 function errorText(err) {
@@ -55,6 +56,7 @@ export default function ProfessorPage({ onBack }) {
   const [title, setTitle] = useState('');
   const [difficulty, setDifficulty] = useState('Médio');
   const [description, setDescription] = useState('');
+  const [downloadingKey, setDownloadingKey] = useState(null);
 
   // Estados dos scripts SQL
   const [schemaSql, setSchemaSql] = useState(`CREATE TABLE autores (
@@ -290,6 +292,19 @@ ORDER BY total_vendas DESC;`);
       setErrorMessage(errorText(err));
     } finally {
       setPendingId(null);
+    }
+  };
+
+  const handleDownloadFile = async (questionId, filename) => {
+    const key = `${questionId}-${filename}`;
+    setDownloadingKey(key);
+    setErrorMessage(null);
+    try {
+      await downloadQuestionFile(questionId, filename);
+    } catch (err) {
+      setErrorMessage(`Falha ao baixar ${filename}: ${errorText(err)}`);
+    } finally {
+      setDownloadingKey(null);
     }
   };
 
@@ -813,26 +828,61 @@ ORDER BY total_vendas DESC;`);
                       Dificuldade: <strong className="text-slate-900 dark:text-slate-200">{q.difficulty}</strong>
                     </span>
 
-                    {q.publishedStatus === 'READY' && (
+                    <div className="flex flex-wrap items-center gap-1.5">
                       <button
-                        onClick={() => handlePublish(q.id)}
-                        disabled={pendingId !== null}
-                        title="Publicar questão"
-                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-emerald-700 dark:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-950 disabled:opacity-50"
+                        type="button"
+                        onClick={() => handleDownloadFile(q.id, 'schema.sql')}
+                        disabled={downloadingKey === `${q.id}-schema.sql`}
+                        className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold rounded-lg bg-indigo-50 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800 hover:bg-indigo-100 dark:hover:bg-indigo-900 transition disabled:opacity-50"
+                        title="Baixar schema.sql da questão"
                       >
-                        <Send className="w-4 h-4" />
-                        Publicar
+                        <Download className="w-3.5 h-3.5 text-indigo-500" />
+                        schema.sql
                       </button>
-                    )}
-                    <button
-                      onClick={() => handleDelete(q.id)}
-                      disabled={pendingId !== null}
-                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40 text-sm font-semibold transition"
-                      title="Excluir questão"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                      Excluir
-                    </button>
+
+                      <button
+                        type="button"
+                        onClick={() => handleDownloadFile(q.id, 'data.sql')}
+                        disabled={downloadingKey === `${q.id}-data.sql`}
+                        className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold rounded-lg bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800 hover:bg-emerald-100 dark:hover:bg-emerald-900 transition disabled:opacity-50"
+                        title="Baixar data.sql da questão"
+                      >
+                        <Download className="w-3.5 h-3.5 text-emerald-500" />
+                        data.sql
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => handleDownloadFile(q.id, 'answer.sql')}
+                        disabled={downloadingKey === `${q.id}-answer.sql`}
+                        className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold rounded-lg bg-amber-50 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-800 hover:bg-amber-100 dark:hover:bg-amber-900 transition disabled:opacity-50"
+                        title="Baixar answer.sql da questão (gabarito)"
+                      >
+                        <Download className="w-3.5 h-3.5 text-amber-500" />
+                        answer.sql
+                      </button>
+
+                      {q.publishedStatus === 'READY' && (
+                        <button
+                          onClick={() => handlePublish(q.id)}
+                          disabled={pendingId !== null}
+                          title="Publicar questão"
+                          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-emerald-700 dark:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-950 disabled:opacity-50"
+                        >
+                          <Send className="w-4 h-4" />
+                          Publicar
+                        </button>
+                      )}
+                      <button
+                        onClick={() => handleDelete(q.id)}
+                        disabled={pendingId !== null}
+                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40 text-sm font-semibold transition"
+                        title="Excluir questão"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                        Excluir
+                      </button>
+                    </div>
                   </div>
                 </div>
               );

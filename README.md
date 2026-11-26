@@ -351,12 +351,54 @@ O seed da aplicação cadastra automaticamente dois perfis para validação do s
 
 | Papel | Email | Senha | Operações Disponíveis |
 | :--- | :--- | :--- | :--- |
-| **Aluno** | `gustavo@sqlarena.com` | `123456` | Acessar catálogo com 21 exercícios de SQL, redigir consultas no editor interativo Monaco, submeter queries para avaliação assíncrona, receber diagnóstico em tempo real e visualizar ranking geral. |
+| **Aluno** | `aluno@sqlarena.com` | `123456` | Acessar catálogo com 21 exercícios de SQL, redigir consultas no editor interativo Monaco, submeter queries para avaliação assíncrona, receber diagnóstico em tempo real e visualizar ranking geral. |
 | **Instrutor** | `admin@sqlarena.com` | `123456` | Criar novas questões com validação automática de scripts SQL (DDL, DML e gabarito), gerenciar status de publicação/exclusão e consultar logs de auditoria no DynamoDB. |
 
 ---
 
-### PASSO 5: Limpeza e Finalização (Tear Down)
+### PASSO 5: Teste de Carga e Auto-scaling dos Pods (Locust)
+
+O projeto inclui um cenário automatizado de teste de estresse em `locust/locustfile.py` que simula alunos simultâneos resolvendo exercícios e submetendo queries para a fila do Kafka, permitindo validar na prática o **HorizontalPodAutoscaler (HPA)** do Kubernetes escalando os Pods de Worker.
+
+#### 1. Monitorar a escala dos Pods em tempo real (Terminal 1):
+
+Abra um terminal e execute o comando de monitoramento contínuo:
+
+* Monitorar o status do HPA (CPU e réplicas atuais/desejadas):
+  ```bash
+  kubectl get hpa -w
+  ```
+
+* Ou monitorar a criação física dos novos Pods de Worker:
+  ```bash
+  kubectl get pods -l tier=worker -w
+  ```
+
+#### 2. Disparar a carga com Locust (Terminal 2):
+
+Em outro terminal na raiz do projeto:
+
+* Instalar o Locust (caso ainda não possua):
+  ```bash
+  pip install locust
+  ```
+
+* **Opção A — Modo Visual (Navegador):**
+  ```bash
+  locust -f locust/locustfile.py --host http://localhost:30800
+  ```
+  > Abra **[http://localhost:8089](http://localhost:8089)** no navegador, informe **30 usuários** com spawn rate de **5** e clique em **Start Swarming**.
+
+* **Opção B — Modo Headless (Execução direta no terminal por 1 minuto):**
+  ```bash
+  locust -f locust/locustfile.py --host http://localhost:30800 --users 30 --spawn-rate 5 --run-time 1m --headless
+  ```
+
+> 🎯 **Resultado Esperado:** Conforme as queries são enfileiradas e a CPU dos workers ultrapassa o limiar estipulado (`60%`), o Kubernetes escalará automaticamente o Deployment `sqlarena-worker` de **1 para até 4 réplicas simultâneas**, cada uma com sua respectiva Sandbox descartável. Ao término da carga, o HPA reduzirá gradualmente as réplicas de volta para 1.
+
+---
+
+### PASSO 6: Limpeza e Finalização (Tear Down)
 
 Ao encerrar os testes:
 

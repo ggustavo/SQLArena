@@ -185,7 +185,7 @@ def test_seed_preserves_user_scores_and_history():
     db = SessionLocal()
     try:
         # Busca ou cria usuário de teste
-        user = db.query(User).filter_by(email="gustavo@sqlarena.com").first()
+        user = db.query(User).filter_by(email="aluno@sqlarena.com").first()
         if user:
             original_score = 150
             user.score = original_score

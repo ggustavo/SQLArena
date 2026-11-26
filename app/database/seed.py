@@ -136,8 +136,8 @@ def seed_database(only_if_empty: bool = False, reset_all: bool = False):
         users_to_seed = [
             {
                 "id": "user_101",
-                "name": "Gustavo Moraes",
-                "email": "gustavo@sqlarena.com",
+                "name": "Aluno",
+                "email": "aluno@sqlarena.com",
                 "password": "123456",
                 "role": "STUDENT",
                 "score": 0,

@@ -1,7 +1,7 @@
 import json
 import logging
 from typing import List, Optional, Any, Dict, Literal
-from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Form
+from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Form, Response
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.orm import Session
 from app.database.session import get_db
@@ -447,3 +447,45 @@ def publish_question(
         "publishedStatus": q.status,
         "message": f"Questão #{question_id} publicada com sucesso."
     }
+
+@router.get("/{question_id}/files/{filename}")
+def download_question_file(
+    question_id: int,
+    filename: str,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_instructor)
+):
+    """
+    Permite ao Instrutor baixar os arquivos SQL (schema.sql, data.sql, answer.sql) da questão diretamente do MinIO.
+    """
+    valid_files = {"schema.sql", "data.sql", "answer.sql"}
+    if filename not in valid_files:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Arquivo inválido. Escolha entre: {', '.join(sorted(valid_files))}"
+        )
+
+    q = db.query(Question).filter(Question.id == question_id).first()
+    if not q:
+        raise HTTPException(status_code=404, detail="Questão não encontrada.")
+
+    try:
+        key = f"questions/{question_id}/{filename}"
+        content = minio_manager.read_file_text(key)
+    except Exception as e:
+        logger.warning("Arquivo %s não encontrado no MinIO para questão #%s: %s", filename, question_id, e)
+        if filename == "schema.sql" and q.schema_sql:
+            content = q.schema_sql
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Arquivo '{filename}' não encontrado no storage MinIO."
+            )
+
+    return Response(
+        content=content,
+        media_type="text/plain; charset=utf-8",
+        headers={
+            "Content-Disposition": f'attachment; filename="question_{question_id}_{filename}"'
+        }
+    )

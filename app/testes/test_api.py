@@ -13,19 +13,19 @@ def test_health_check():
 
 def test_auth_login_success():
     response = client.post("/api/auth/login", json={
-        "email": "gustavo@sqlarena.com",
+        "email": "aluno@sqlarena.com",
         "password": "123456"
     })
     assert response.status_code == 200
     data = response.json()
     assert "token" in data
-    assert data["user"]["email"] == "gustavo@sqlarena.com"
+    assert data["user"]["email"] == "aluno@sqlarena.com"
     assert data["user"]["role"] == "STUDENT"
-    assert data["user"]["name"] == "Gustavo Moraes"
+    assert data["user"]["name"] == "Aluno"
 
 def test_auth_login_invalid():
     response = client.post("/api/auth/login", json={
-        "email": "gustavo@sqlarena.com",
+        "email": "aluno@sqlarena.com",
         "password": "wrongpassword"
     })
     assert response.status_code == 401
@@ -63,7 +63,7 @@ def test_get_question_details():
 def test_submission_rate_limit():
     # Login aluno
     login_res = client.post("/api/auth/login", json={
-        "email": "gustavo@sqlarena.com",
+        "email": "aluno@sqlarena.com",
         "password": "123456"
     })
     token = login_res.json()["token"]
@@ -128,7 +128,7 @@ def test_dynamodb_audit_endpoints():
 def test_live_queue_endpoint():
     # Login como aluno ou admin
     login_res = client.post("/api/auth/login", json={
-        "email": "gustavo@sqlarena.com",
+        "email": "aluno@sqlarena.com",
         "password": "123456"
     })
     assert login_res.status_code == 200

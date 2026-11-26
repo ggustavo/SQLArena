@@ -164,3 +164,40 @@ export async function deleteQuestion(id) {
   const response = await api.delete(`/questions/${id}`);
   return response.data;
 }
+
+/**
+ * Baixa um arquivo SQL (schema.sql, data.sql, answer.sql) de uma questão.
+ */
+export async function downloadQuestionFile(questionId, filename) {
+  if (USE_MOCK) {
+    const q = questionsCache.find((item) => item.id === Number(questionId));
+    let content = `-- ${filename} para Questão #${questionId}\n`;
+    if (filename === 'schema.sql') content = q?.schemaSql || content;
+    if (filename === 'data.sql') content = q?.dataSql || content;
+    if (filename === 'answer.sql') content = q?.answerSql || content;
+
+    const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
+    const url = window.URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.setAttribute('download', filename);
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    window.URL.revokeObjectURL(url);
+    return;
+  }
+
+  const response = await api.get(`/questions/${questionId}/files/${filename}`, {
+    responseType: 'blob',
+  });
+  const blob = new Blob([response.data], { type: 'text/plain;charset=utf-8' });
+  const url = window.URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.setAttribute('download', filename);
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  window.URL.revokeObjectURL(url);
+}
