@@ -103,9 +103,12 @@ Agora, escolha **uma** das duas opções a seguir para o DynamoDB:
 
 1. **Provisionar as tabelas no DynamoDB via Terraform:**
    * Acesse o diretório de variáveis do Terraform e copie o modelo:
-     ```powershell
-     cd terraform/envs
-     Copy-Item credentials.tfvars.example credentials.tfvars
+     ```bash
+     # macOS / Linux:
+     cd terraform/envs && cp credentials.tfvars.example credentials.tfvars
+
+     # Windows (PowerShell):
+     cd terraform\envs; Copy-Item credentials.tfvars.example credentials.tfvars
      ```
    * Abra o arquivo `credentials.tfvars` e insira suas credenciais ativas da AWS (`aws_access_key`, `aws_secret_key` e `aws_session_token`).
    * Retorne à pasta `terraform` e aplique o plano:
@@ -194,11 +197,16 @@ Todos os containers devem exibir o status **`Up (healthy)`** ou **`Up`**.
 
 #### 3. Para pausar ou resetar a aplicação:
 * **Pausar mantendo os dados salvos em `./data/`:**
-  ```powershell
+  ```bash
   docker compose down
   ```
 * **Resetar completamente (apagar containers, redes e a pasta de dados `./data/`):**
-  ```powershell
+  ```bash
+  # macOS / Linux:
+  docker compose down -v
+  rm -rf data
+
+  # Windows (PowerShell):
   docker compose down -v
   Remove-Item -Recurse -Force data
   ```
@@ -256,11 +264,25 @@ flowchart TB
 * **POD 2 — `sqlarena-worker` (`k8s/08-worker-pod.yaml`):** Padrão **Sidecar** co-localizando o **Worker Python** e o **PostgreSQL Sandbox** isolado (`127.0.0.1:5432`). Ao escalar via HPA, cada réplica ganha seu próprio sandbox independente.
 
 #### 1. Iniciar o cluster local:
-* **No Docker Desktop:** Abra Settings -> **Kubernetes** -> Marque **Enable Kubernetes** -> **Apply & restart**.
-* **Ou no Minikube:** Execute no terminal:
-  ```powershell
-  minikube start --driver=docker
-  ```
+
+Escolha uma das opções conforme seu ambiente:
+
+* **Opção 1 (macOS com OrbStack — Mais leve e recomendada):**
+  * Abra o OrbStack -> Vá em **Settings / Preferences** -> Aba **Kubernetes** -> Marque **Enable Kubernetes**.
+  * *Vantagem no OrbStack:* Ele já compartilha diretamente as imagens criadas pelo Docker (`sqlarena-backend:latest`, `sqlarena-worker:latest`, `sqlarena-frontend:latest`) e expõe as portas NodePort diretamente em `http://localhost:30080` sem precisar de túneis!
+* **Opção 2 (Minikube — Padrão multiplataforma macOS/Linux/Windows):**
+  * Se ainda não tiver o CLI instalado no macOS: `brew install minikube`
+  * Inicie o cluster rodando como container Docker:
+    ```bash
+    minikube start --driver=docker
+    ```
+    *(O Minikube roda como um container gerenciado pelo OrbStack/Docker).*
+  * Como o Minikube possui um daemon interno isolado, carregue as imagens locais:
+    ```bash
+    minikube image load sqlarena-backend:latest sqlarena-worker:latest sqlarena-frontend:latest
+    ```
+* **Opção 3 (Docker Desktop):**
+  * Abra Settings -> **Kubernetes** -> Marque **Enable Kubernetes** -> **Apply & restart**.
 
 #### 2. Configurar o Kubernetes conforme o modo de DynamoDB escolhido no Passo 1:
 O cluster opera de forma transparente tanto com a AWS real quanto com o Ministack local:
