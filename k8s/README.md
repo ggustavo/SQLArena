@@ -229,7 +229,32 @@ O HPA não lê a CPU sozinho. Ele pergunta as métricas para um componente do cl
 
 ---
 
-### 5. Comandos Úteis para Visualizar a Escala em Ação:
+### 5. Onde fica o Balanceador de Carga quando os Pods escalam?
+
+Muitos desenvolvedores procuram por um "HAProxy" ou "Nginx separado" para atuar como load balancer, mas no SQLArena o balanceamento já está **100% configurado** de forma elegante e nativa em dois níveis:
+
+#### A. Para a Camada Web/HTTP (`sqlarena-web`): O próprio SERVICE é o Load Balancer!
+* No Kubernetes, todo **Service** (`sqlarena-web-nodeport` e `sqlarena-web-clusterip`) é um **Load Balancer Layer 4 nativo**.
+* Ele possui um seletor (`selector: app: sqlarena, tier: web`).
+* Quando o HPA escala de 1 para 3 Pods Web, o Kubernetes automaticamente cadastra os 3 endereços IP desses Pods num objeto chamado **Endpoints**.
+* O componente interno **`kube-proxy`** do cluster distribui cada requisição que chega do navegador ou do backend entre as réplicas ativas em modo **Round-Robin**.
+* Você pode conferir os IPs sendo balanceados em tempo real rodando:
+  ```bash
+  kubectl get endpoints sqlarena-web-clusterip
+  ```
+
+#### B. Para os Workers Assíncronos (`sqlarena-worker`): O Apache KAFKA é o Load Balancer!
+* Os Workers **não atendem requisições HTTP**; eles processam tarefas assíncronas consumindo mensagens do Kafka.
+* O balanceamento de carga aqui é feito pelo mecanismo distribuído de **`Consumer Group` (`sqlarena-workers-group`)** do Apache Kafka:
+  * No nosso manifesto [`06-kafka.yaml`](06-kafka.yaml), configuramos o tópico com **3 partições** (`KAFKA_NUM_PARTITIONS: 3`).
+  * **Com 1 Worker:** ele consome as mensagens das 3 partições.
+  * **Com 2 Workers (após escala do HPA):** o Kafka faz um *Rebalance* automático — Worker 1 processa partições 0 e 1; Worker 2 processa a partição 2.
+  * **Com 3 Workers:** cada Worker processa exatamente 1 partição em **paralelo real e independente**.
+* Nenhum worker repete a tarefa do outro e todo o trabalho é distribuído uniformemente sem gargalos.
+
+---
+
+### 6. Comandos Úteis para Visualizar a Escala em Ação:
 
 * **Acompanhar o HPA ajustando as réplicas em tempo real:**
   ```bash
