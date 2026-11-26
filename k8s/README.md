@@ -142,11 +142,111 @@ No Kubernetes, existem duas necessidades de armazenamento completamente opostas:
 * **Por que essa estratégia é essencial no Sandbox?**
   * **Segurança e Isolamento:** Cada réplica do Worker tem a sua própria Sandbox descartável. Uma query maliciosa ou pesada de um aluno nunca "suja" o banco de outro.
   * **Limpeza Automática:** Não acumula lixo no disco do servidor com milhares de execuções de testes antigos.
-  * **Escalabilidade Perfeita:** Se o HPA subir de 1 para 5 réplicas de Workers, cada Pod nasce instantaneamente com seu próprio `emptyDir` paralelo e isolado.
+  * **Escalabilidade Perfeita:** Se o HPA subir de 1 para 4 réplicas de Workers, cada Pod nasce instantaneamente com seu próprio `emptyDir` paralelo e isolado.
 
 ---
 
-## 🗺️ 8. Visão Geral Integrada: Como tudo se conecta
+## 📈 8. Auto-scaling de Pods (HPA) e Gestão de Recursos (Requests vs Limits)
+
+No Kubernetes, nós não aumentamos os Pods manualmente quando há um pico de acessos. Usamos o **HorizontalPodAutoscaler (HPA)**, definido em [`09-hpa.yaml`](09-hpa.yaml).
+
+### 1. Dissecando o Manifesto `09-hpa.yaml`:
+
+```yaml
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: sqlarena-worker-hpa
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: sqlarena-worker
+  minReplicas: 1
+  maxReplicas: 4
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 60
+```
+
+* **`scaleTargetRef`:** Informa qual Deployment o HPA está vigiando (neste caso, o `sqlarena-worker`).
+* **`minReplicas: 1` e `maxReplicas: 4`:** O "piso" e o "teto" de escalabilidade. Em momentos normais, fica apenas 1 Pod ativo economizando memória. Em picos de submissões no Kafka, escala para até 4 Pods simultâneos.
+* **`averageUtilization: 60`:** O gatilho de disparo. Se a média de CPU dos pods ultrapassar 60%, o HPA cria réplicas adicionais imediatamente.
+
+---
+
+### 2. O Segredo: O que são `requests` e `limits`?
+
+Para o HPA saber o que é "60%", os containers nos manifestos [`07-web.yaml`](07-web.yaml) e [`08-worker.yaml`](08-worker.yaml) possuem blocos de recursos configurados:
+
+```yaml
+resources:
+  requests:
+    cpu: "150m"      # Reserva garantida para o Pod nascer
+    memory: "256Mi"  # Reserva mínima de RAM
+  limits:
+    cpu: "500m"      # Teto máximo de CPU permitida
+    memory: "512Mi"  # Teto máximo de RAM
+```
+
+* **O que significa "m" (millicores)?**  
+  No Kubernetes, **1 núcleo de processador = 1000m**.  
+  Portanto, `150m` significa **0.15 de 1 núcleo (15%)**.
+* **`requests` (Reserva Mínima):** É o bilhete de entrada do Pod. O Kubernetes só coloca o Pod em um nó se aquele nó tiver pelo menos 150m livres.
+* **`limits` (Teto de Segurança):** Impede que um script com loop infinito ou query pesada trave o computador inteiro. Se o container tentar passar de 500m (meio núcleo), a CPU dele é limitada (*throttled*).
+
+---
+
+### 3. Por que a escala funciona mesmo em um Mac/PC super potente?
+
+> ❓ **Dúvida Comum:** *"Se o meu computador tem 12 ou 16 núcleos fortíssimos, 60% de CPU física nunca vai ser atingido!"*
+
+**Resposta:** O HPA **NÃO calcula 60% do processador da sua máquina física**!  
+Ele calcula **60% em relação ao `request` do Pod**:
+
+$$\text{Gatilho de Disparo da Escala} = 150m \times 0.60 = \mathbf{90m}$$
+
+* **90 millicores** equivale a meros **0.09 de um único núcleo** de processamento!
+* Mesmo em um Mac M1/M2/M3/M4 de última geração, quando o Locust dispara queries simultâneas, o Python consumindo o Kafka e rodando no Postgres Sandbox consome facilmente entre 100m e 200m de CPU.
+* O Kubernetes detecta que ultrapassou a cota de 90m e **duplica ou triplica os Pods de Worker em poucos segundos**!
+
+---
+
+### 4. O Papel do `metrics-server`
+
+O HPA não lê a CPU sozinho. Ele pergunta as métricas para um componente do cluster chamado **`metrics-server`**.
+
+* **No OrbStack (macOS):** O OrbStack já traz o `metrics-server` **ativado nativamente**. O HPA funciona de fábrica sem instalar nada extra.
+* **Se você rodar em outro cluster e ver `<unknown>/60%`:**  
+  Significa que o `metrics-server` ainda não foi ativado naquele cluster. Basta aplicar o componente oficial:
+  ```bash
+  kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml
+  ```
+
+---
+
+### 5. Comandos Úteis para Visualizar a Escala em Ação:
+
+* **Acompanhar o HPA ajustando as réplicas em tempo real:**
+  ```bash
+  kubectl get hpa -w
+  ```
+* **Ver o consumo real de CPU (em millicores) e memória de cada Pod:**
+  ```bash
+  kubectl top pods
+  ```
+* **Inspecionar o histórico e eventos de decisão do HPA:**
+  ```bash
+  kubectl describe hpa sqlarena-worker-hpa
+  ```
+
+---
+
+## 🗺️ 9. Visão Geral Integrada: Como tudo se conecta
 
 ```mermaid
 flowchart TD
@@ -213,7 +313,7 @@ flowchart TD
 
 ---
 
-## 📊 9. Tabela Resumo Rápido
+## 📊 10. Tabela Resumo Rápido
 
 | Objeto Kubernetes | O que é? | Para que serve no SQLArena? |
 | :--- | :--- | :--- |

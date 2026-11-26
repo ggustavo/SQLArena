@@ -59,7 +59,7 @@ SQLArena/
 │   ├── 07-web.yaml             # POD 1 (Frontend + Backend) + Services NodePort (30080) e ClusterIP
 │   ├── 08-worker.yaml          # POD 2 (Worker + Postgres Sandbox Sidecar) + Service ClusterIP
 │   ├── 09-hpa.yaml             # HorizontalPodAutoscaler (HPA) para escalabilidade dos Pods
-│   └── README.md               # Guia didático completo sobre Pods, Deployments e Services (ClusterIP vs NodePort)
+│   └── README.md               # Guia didático completo sobre Pods, Deployments, Services e HPA (Auto-scaling)
 ├── terraform/                  # Infraestrutura como Código para o DynamoDB
 │   ├── modules/dynamodb/       # Módulo com as tabelas de submissões e auditoria CRUD
 │   ├── envs/credentials.tfvars.example # Modelo para credenciais da AWS
