@@ -8,16 +8,16 @@ Plataforma distribuída para aprendizado e avaliação automatizada de consultas
 
 A arquitetura do SQLArena é composta por microsserviços e serviços de dados conteinerizados:
 
-| Componente / Camada | Tecnologia | Função na Aplicação |
-| :--- | :--- | :--- |
-| **Banco NoSQL** | **Amazon DynamoDB** (AWS ou Ministack) | Persistência imutável do histórico de submissões (`sqlarena-submissions-log`) e auditoria de ações administrativas (`sqlarena-crud-actions-log`). |
-| **Banco Relacional Principal** | **PostgreSQL 16** (`postgres:16-alpine`) | Persistência relacional de usuários, catálogo de categorias N:N, questões e pontuações consolidadas. |
-| **Armazenamento de Objetos** | **MinIO** (`elestio/minio:latest`) | Armazenamento S3-compatible de scripts SQL de cada exercício (`schema.sql`, `data.sql`, `answer.sql`) e avatares de usuários. |
-| **Mensageria Assíncrona** | **Apache Kafka** (`apache/kafka:3.8.0`) | Broker em modo KRaft com tópicos particionados (`sqlarena-submissions-queue`), Consumer Groups e Dead Letter Queue (DLQ). |
-| **Cache & Rate Limit** | **Redis 7** (`redis:7-alpine`) | Controle de taxa de submissão (5s por usuário), cache de ranking global e estado de processamento em tempo real. |
-| **Backend API** | **`app/Dockerfile`** (Python 3.11 / FastAPI) | API RESTful com autenticação JWT, validação de regras de negócio, health check real e seed automático. |
-| **Worker de Avaliação** | **`app/worker/Dockerfile`** (Python 3.11) | Motor de execução em background consumidor do Kafka para execução e validação de queries SQL em sandbox. |
-| **Frontend Web** | **`frontend/Dockerfile`** (React 19 / Nginx) | SPA em React 19 com Monaco Editor, Tailwind CSS e Nginx atuando como reverse proxy para a API. |
+| Componente / Camada                  | Tecnologia                                           | Função na Aplicação                                                                                                                                     |
+| :----------------------------------- | :--------------------------------------------------- | :---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Banco NoSQL**                | **Amazon DynamoDB** (AWS ou Ministack)         | Persistência imutável do histórico de submissões (`sqlarena-submissions-log`) e auditoria de ações administrativas (`sqlarena-crud-actions-log`). |
+| **Banco Relacional Principal** | **PostgreSQL 16** (`postgres:16-alpine`)     | Persistência relacional de usuários, catálogo de categorias N:N, questões e pontuações consolidadas.                                                  |
+| **Armazenamento de Objetos**   | **MinIO** (`elestio/minio:latest`)           | Armazenamento S3-compatible de scripts SQL de cada exercício (`schema.sql`, `data.sql`, `answer.sql`) e avatares de usuários.                       |
+| **Mensageria Assíncrona**     | **Apache Kafka** (`apache/kafka:3.8.0`)      | Broker em modo KRaft com tópicos particionados (`sqlarena-submissions-queue`), Consumer Groups e Dead Letter Queue (DLQ).                                |
+| **Cache & Rate Limit**         | **Redis 7** (`redis:7-alpine`)               | Controle de taxa de submissão (5s por usuário), cache de ranking global e estado de processamento em tempo real.                                          |
+| **Backend API**                | **`app/Dockerfile`** (Python 3.11 / FastAPI) | API RESTful com autenticação JWT, validação de regras de negócio, health check real e seed automático.                                                |
+| **Worker de Avaliação**      | **`app/worker/Dockerfile`** (Python 3.11)    | Motor de execução em background consumidor do Kafka para execução e validação de queries SQL em sandbox.                                              |
+| **Frontend Web**               | **`frontend/Dockerfile`** (React 19 / Nginx) | SPA em React 19 com Monaco Editor, Tailwind CSS e Nginx atuando como reverse proxy para a API.                                                              |
 
 ---
 
@@ -104,6 +104,7 @@ Agora, escolha **uma** das duas opções a seguir para o DynamoDB:
 #### 🟢 OPÇÃO 1.A: Utilizar o Amazon DynamoDB Oficial na AWS
 
 1. **Provisionar as tabelas no DynamoDB via Terraform:**
+
    * Acesse o diretório de variáveis do Terraform e copie o modelo:
      * No macOS / Linux:
        ```bash
@@ -130,10 +131,11 @@ Agora, escolha **uma** das duas opções a seguir para o DynamoDB:
      ```bash
      cd ..
      ```
-     *(As tabelas `sqlarena-submissions-log` e `sqlarena-crud-actions-log` serão criadas na AWS).*
 
+     *(As tabelas `sqlarena-submissions-log` e `sqlarena-crud-actions-log` serão criadas na AWS).*
 2. **Preencher o arquivo `.env` na raiz do projeto:**
    Abra o `.env` e configure suas credenciais da AWS:
+
    ```env
    AWS_REGION=us-east-1
    AWS_ACCESS_KEY_ID=ASIA...
@@ -141,6 +143,7 @@ Agora, escolha **uma** das duas opções a seguir para o DynamoDB:
    AWS_SESSION_TOKEN=IQoJb3JpZ2luX2VjE...
    DYNAMODB_ENDPOINT_URL=
    ```
+
    *(Mantenha `DYNAMODB_ENDPOINT_URL=` vazio para conectar diretamente aos servidores da AWS).*
 
 ---
@@ -149,6 +152,7 @@ Agora, escolha **uma** das duas opções a seguir para o DynamoDB:
 
 1. **Configurar o arquivo `.env` na raiz primeiro:**
    Abra o arquivo `.env` e ajuste as variáveis para apontar para o container do Ministack local:
+
    ```env
    AWS_REGION=us-east-1
    AWS_ACCESS_KEY_ID=test
@@ -156,9 +160,9 @@ Agora, escolha **uma** das duas opções a seguir para o DynamoDB:
    AWS_SESSION_TOKEN=
    DYNAMODB_ENDPOINT_URL=http://host.docker.internal:4566
    ```
-
 2. **Iniciar o container do Ministack:**
    Execute no terminal para inicializar o emulador local na porta `4566`:
+
    ```bash
    docker compose -f ministack/docker-compose.yml up -d
    ```
@@ -194,7 +198,9 @@ O arquivo [`docker-compose.yml`](docker-compose.yml) orquestra de forma integrad
 > 💡 **Vantagem da pasta `./data/`:** Todos os dados persistidos ficam visíveis no seu explorador de arquivos em uma única pasta ignorada pelo Git. Você não precisa inspecionar volumes internos do Docker.
 
 #### 1. Iniciar toda a aplicação com 1 comando:
+
 Na raiz do projeto (`SQLArena/`), execute:
+
 ```bash
 docker compose up -d --build
 ```
@@ -202,28 +208,35 @@ docker compose up -d --build
 O comando irá construir as 3 imagens locais via Dockerfile, aguardar os health checks das dependências e iniciar a API, o Worker e o Frontend.
 
 #### 2. Verificar o status dos containers:
+
 ```bash
 docker compose ps
 ```
+
 Todos os containers devem exibir o status **`Up (healthy)`** ou **`Up`**.
 
 #### 3. Para pausar ou resetar a aplicação:
+
 * **Pausar mantendo os dados salvos em `./data/`:**
   ```bash
   docker compose down
   ```
 * **Resetar completamente (apagar containers, redes e a pasta de dados `./data/`):**
   * No macOS / Linux:
+
     ```bash
     docker compose down -v
     ```
+
     ```bash
     rm -rf data
     ```
   * No Windows (PowerShell):
+
     ```powershell
     docker compose down -v
     ```
+
     ```powershell
     Remove-Item -Recurse -Force data
     ```
@@ -290,43 +303,57 @@ flowchart TB
 
 > 📖 **Quer entender a fundo como funciona Pods, Deployments e Services (ClusterIP vs NodePort)?** Consulte nosso guia didático em [k8s/README.md](k8s/README.md).
 
-#### 1. Aplicar a aplicação com `kubectl` (Leitura direta do `.env`):
+#### 1. Construir as imagens locais e aplicar a aplicação com `kubectl`:
 
-Você **não precisa editar nenhum arquivo YAML do Kubernetes**. O Kubernetes lê diretamente o arquivo `.env` configurado no **Passo 1**:
+Você **não precisa editar nenhum arquivo YAML do Kubernetes**. O Kubernetes lê diretamente o arquivo `.env` configurado no **Passo 1**, mas como o Kubernetes apenas orquestra imagens prontas (não executa `Dockerfile`), é necessário construir primeiro as 3 imagens locais da aplicação (`sqlarena-backend`, `sqlarena-worker` e `sqlarena-frontend`):
 
-* **Passo A:** Carregar todos os segredos do `.env` automaticamente no cluster:
+* **Passo A:** Construir as imagens Docker locais (necessário na primeira execução ou após alterações no código):
+
+  ```bash
+  docker compose build
+  ```
+
+  *(Você não precisa subir os containers pelo Docker Compose — o comando acima apenas gera as imagens localmente para que o cluster Kubernetes consiga utilizá-las com `imagePullPolicy: IfNotPresent`).*
+
+* **Passo B:** Carregar todos os segredos do `.env` automaticamente no cluster:
+
   ```bash
   kubectl create secret generic sqlarena-secrets --from-env-file=.env --dry-run=client -o yaml | kubectl apply -f -
   ```
 
-* **Passo B:** Inicializar todos os serviços, Pods e autoscaling (HPA):
+* **Passo C:** Inicializar todos os serviços, Pods e autoscaling (HPA):
+
   ```bash
   kubectl apply -f k8s/
   ```
 
 #### 2. Verificar Pods e Services:
+
 * Verifique se todos os Pods estão 'Running' (observe READY 2/2 nos Pods Web e Worker):
+
   ```bash
   kubectl get pods
   ```
-
 * Listar os Services (NodePort e ClusterIP):
+
   ```bash
   kubectl get services
   ```
-
 * Inspecionar o auto-scaling dos Pods (HPA):
+
   ```bash
   kubectl get hpa
   ```
 
 #### 3. Para encerrar o Kubernetes:
+
 * Remover os recursos do cluster:
+
   ```bash
   kubectl delete -f k8s/
   ```
-
 * Remover o secret gerado:
+
   ```bash
   kubectl delete secret sqlarena-secrets
   ```
@@ -337,11 +364,11 @@ Você **não precisa editar nenhum arquivo YAML do Kubernetes**. O Kubernetes l�
 
 Após a inicialização (seja por **Docker Compose** ou **Kubernetes**), acesse os serviços:
 
-| Serviço | URL via Docker Compose | URL via Kubernetes (NodePort) | Credenciais de Acesso |
-| :--- | :--- | :--- | :--- |
-| **Plataforma Web (Frontend)** | [http://localhost](http://localhost) (ou `:5173`) | [http://localhost:30080](http://localhost:30080) | *(Ver Passo 4)* |
-| **Documentação da API (Swagger)** | [http://localhost:8000/docs](http://localhost:8000/docs) | [http://localhost:30800/docs](http://localhost:30800/docs) | Acesso livre |
-| **Console Web do MinIO Storage** | [http://localhost:9001](http://localhost:9001) | [http://localhost:30901](http://localhost:30901) | **Usuário:** `minioadmin`<br>**Senha:** `minioadmin123` |
+| Serviço                                  | URL via Docker Compose                                  | URL via Kubernetes (NodePort)                             | Credenciais de Acesso                                                |
+| :---------------------------------------- | :------------------------------------------------------ | :-------------------------------------------------------- | :------------------------------------------------------------------- |
+| **Plataforma Web (Frontend)**       | [http://localhost](http://localhost) (ou `:5173`)      | [http://localhost:30080](http://localhost:30080)           | *(Ver Passo 4)*                                                    |
+| **Documentação da API (Swagger)** | [http://localhost:8000/docs](http://localhost:8000/docs) | [http://localhost:30800/docs](http://localhost:30800/docs) | Acesso livre                                                         |
+| **Console Web do MinIO Storage**    | [http://localhost:9001](http://localhost:9001)           | [http://localhost:30901](http://localhost:30901)           | **Usuário:** `minioadmin`**Senha:** `minioadmin123` |
 
 ---
 
@@ -349,10 +376,10 @@ Após a inicialização (seja por **Docker Compose** ou **Kubernetes**), acesse 
 
 O seed da aplicação cadastra automaticamente dois perfis para validação do sistema:
 
-| Papel | Email | Senha | Operações Disponíveis |
-| :--- | :--- | :--- | :--- |
-| **Aluno** | `aluno@sqlarena.com` | `123456` | Acessar catálogo com 21 exercícios de SQL, redigir consultas no editor interativo Monaco, submeter queries para avaliação assíncrona, receber diagnóstico em tempo real e visualizar ranking geral. |
-| **Instrutor** | `admin@sqlarena.com` | `123456` | Criar novas questões com validação automática de scripts SQL (DDL, DML e gabarito), gerenciar status de publicação/exclusão e consultar logs de auditoria no DynamoDB. |
+| Papel               | Email                  | Senha      | Operações Disponíveis                                                                                                                                                                                  |
+| :------------------ | :--------------------- | :--------- | :-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Aluno**     | `aluno@sqlarena.com` | `123456` | Acessar catálogo com 21 exercícios de SQL, redigir consultas no editor interativo Monaco, submeter queries para avaliação assíncrona, receber diagnóstico em tempo real e visualizar ranking geral. |
+| **Instrutor** | `admin@sqlarena.com` | `123456` | Criar novas questões com validação automática de scripts SQL (DDL, DML e gabarito), gerenciar status de publicação/exclusão e consultar logs de auditoria no DynamoDB.                             |
 
 ---
 
@@ -365,11 +392,12 @@ O projeto inclui um cenário automatizado de teste de estresse em `locust/locust
 Abra um terminal e execute o comando de monitoramento contínuo:
 
 * Monitorar o status do HPA (CPU e réplicas atuais/desejadas):
+
   ```bash
   kubectl get hpa -w
   ```
-
 * Ou monitorar a criação física dos novos Pods de Worker:
+
   ```bash
   kubectl get pods -l tier=worker -w
   ```
@@ -379,17 +407,20 @@ Abra um terminal e execute o comando de monitoramento contínuo:
 Em outro terminal na raiz do projeto:
 
 * Instalar o Locust (caso ainda não possua):
+
   ```bash
   pip install locust
   ```
-
 * **Opção A — Modo Visual (Navegador):**
+
   ```bash
   locust -f locust/locustfile.py --host http://localhost:30800
   ```
-  > Abra **[http://localhost:8089](http://localhost:8089)** no navegador, informe **30 usuários** com spawn rate de **5** e clique em **Start Swarming**.
 
+  > Abra **[http://localhost:8089](http://localhost:8089)** no navegador, informe **30 usuários** com spawn rate de **5** e clique em **Start Swarming**.
+  >
 * **Opção B — Modo Headless (Execução direta no terminal por 1 minuto):**
+
   ```bash
   locust -f locust/locustfile.py --host http://localhost:30800 --users 30 --spawn-rate 5 --run-time 1m --headless
   ```
@@ -441,6 +472,7 @@ Ao encerrar os testes:
 Os manifestos da pasta `k8s/` utilizam exclusivamente a ferramenta padrão **`kubectl`** e funcionam em qualquer sistema:
 
 ### 🍎 macOS (com OrbStack ou Docker Desktop)
+
 * **OrbStack (Mais leve e rápido — Recomendado):**
   1. Abra o OrbStack.
   2. Vá em **Settings / Preferences** (ícone de engrenagem) -> aba **Kubernetes**.
@@ -450,6 +482,7 @@ Os manifestos da pasta `k8s/` utilizam exclusivamente a ferramenta padrão **`ku
   Abra Settings -> **Kubernetes** -> Marque **Enable Kubernetes** -> **Apply & restart**.
 
 ### 🪟 Windows (com Docker Desktop)
+
 1. Abra o Docker Desktop.
 2. Clique no ícone de engrenagem (Settings) no canto superior direito.
 3. Acesse a aba **Kubernetes**.
@@ -457,6 +490,7 @@ Os manifestos da pasta `k8s/` utilizam exclusivamente a ferramenta padrão **`ku
 5. Aguarde o indicador do Kubernetes no rodapé do Docker Desktop ficar verde.
 
 ### 🐧 Linux (com K3s ou Docker Desktop)
+
 * **Opção K3s (Super leve):**
   * Instalar o K3s:
     ```bash

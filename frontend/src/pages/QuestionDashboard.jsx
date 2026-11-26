@@ -178,8 +178,9 @@ export default function QuestionDashboard({ user, questions = [], onSelectQuesti
 
       {/* 
         LISTAGEM DE QUESTÕES
-        - Lado Esquerdo: Status -> Dificuldade (Fácil/Médio/Difícil) -> Título -> Tempo de Execução (se concluída)
-        - Lado Direito: Tags de Categorias (ordenadas alfabeticamente) + Chevron
+        - Linha superior: Status -> Dificuldade -> Título (largura total) -> Tempo de Execução (se concluída)
+        - Linha inferior: Tags de Categorias (ordenadas alfabeticamente) alinhadas à direita
+        - Direita: Chevron
       */}
       <div className="w-full bg-white dark:bg-[#1a1d24] border border-slate-200/90 dark:border-[#2d3340] rounded-3xl overflow-hidden shadow-xs divide-y divide-slate-100 dark:divide-[#252a35] transition-colors">
         {filteredQuestions.map((q) => {
@@ -203,68 +204,69 @@ export default function QuestionDashboard({ user, questions = [], onSelectQuesti
                   onSelectQuestion(q);
                 }
               }}
-              className="w-full px-5 py-4 sm:px-7 sm:py-5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 sm:gap-4 transition-colors duration-150 hover:bg-slate-50/90 dark:hover:bg-[#202530] cursor-pointer group select-none outline-none focus-visible:bg-slate-50 dark:focus-visible:bg-[#202530]"
+              className="w-full px-5 py-4 sm:px-7 sm:py-5 flex items-center justify-between gap-3 sm:gap-4 transition-colors duration-150 hover:bg-slate-50/90 dark:hover:bg-[#202530] cursor-pointer group select-none outline-none focus-visible:bg-slate-50 dark:focus-visible:bg-[#202530]"
             >
-              {/* Lado Esquerdo: 1. Status -> 2. Dificuldade -> 3. Título -> 4. Tempo de Execução */}
-              <div className="flex items-center gap-3 sm:gap-3.5 min-w-0 flex-1">
-                {/* 1. Indicador de Status Simples (Maior e visível) */}
-                <div className="flex-shrink-0 flex items-center justify-center">
-                  {isSolved ? (
-                    <CheckCircle2
-                      className="w-6 h-6 text-emerald-600 dark:text-emerald-400"
-                      aria-label="Questão Concluída"
-                    />
-                  ) : isAttempted ? (
-                    <Clock
-                      className="w-6 h-6 text-amber-500 dark:text-amber-400"
-                      aria-label="Questão Em Progresso"
-                    />
-                  ) : (
-                    <Circle
-                      className="w-6 h-6 text-slate-300 dark:text-slate-600"
-                      aria-label="Questão Pendente"
-                    />
-                  )}
-                </div>
+              {/* Conteúdo principal em duas linhas para evitar que o título fique espremido */}
+              <div className="flex-1 min-w-0 flex flex-col gap-2.5">
+                {/* Linha superior: 1. Status -> 2. Dificuldade -> 3. Título -> 4. Tempo de Execução */}
+                <div className="flex items-start sm:items-center gap-3 sm:gap-3.5 min-w-0 w-full">
+                  {/* 1. Indicador de Status Simples (Maior e visível) */}
+                  <div className="flex-shrink-0 flex items-center justify-center mt-0.5 sm:mt-0">
+                    {isSolved ? (
+                      <CheckCircle2
+                        className="w-6 h-6 text-emerald-600 dark:text-emerald-400"
+                        aria-label="Questão Concluída"
+                      />
+                    ) : isAttempted ? (
+                      <Clock
+                        className="w-6 h-6 text-amber-500 dark:text-amber-400"
+                        aria-label="Questão Em Progresso"
+                      />
+                    ) : (
+                      <Circle
+                        className="w-6 h-6 text-slate-300 dark:text-slate-600"
+                        aria-label="Questão Pendente"
+                      />
+                    )}
+                  </div>
 
-                {/* 2. Dificuldade (Fácil, Médio, Difícil) no início antes do título */}
-                <span
-                  className={`px-3 py-1 rounded-full text-xs font-bold border flex-shrink-0 ${
-                    q.difficulty === 'Fácil'
-                      ? 'bg-emerald-50 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-400 border-emerald-200/80 dark:border-emerald-800/60'
-                      : q.difficulty === 'Médio'
-                      ? 'bg-amber-50 dark:bg-amber-950/50 text-amber-700 dark:text-amber-400 border-amber-200/80 dark:border-amber-800/60'
-                      : 'bg-rose-50 dark:bg-rose-950/50 text-rose-700 dark:text-rose-400 border-rose-200/80 dark:border-rose-800/60'
-                  }`}
-                >
-                  {q.difficulty}
-                </span>
-
-                {/* 3. Título do Desafio + 4. Tempo de Execução (ao lado direito do título) */}
-                <div className="flex items-center gap-2.5 min-w-0 flex-wrap">
-                  <span className="font-bold text-slate-900 dark:text-slate-100 text-base sm:text-lg group-hover:text-indigo-600 dark:group-hover:text-indigo-400 transition-colors">
-                    <span className="text-slate-400 dark:text-slate-500 font-normal mr-2">
-                      #{q.id}.
-                    </span>
-                    {q.title}
+                  {/* 2. Dificuldade (Fácil, Médio, Difícil) no início antes do título */}
+                  <span
+                    className={`px-3 py-1 rounded-full text-xs font-bold border flex-shrink-0 mt-0.5 sm:mt-0 ${
+                      q.difficulty === 'Fácil'
+                        ? 'bg-emerald-50 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-400 border-emerald-200/80 dark:border-emerald-800/60'
+                        : q.difficulty === 'Médio'
+                        ? 'bg-amber-50 dark:bg-amber-950/50 text-amber-700 dark:text-amber-400 border-amber-200/80 dark:border-amber-800/60'
+                        : 'bg-rose-50 dark:bg-rose-950/50 text-rose-700 dark:text-rose-400 border-rose-200/80 dark:border-rose-800/60'
+                    }`}
+                  >
+                    {q.difficulty}
                   </span>
 
-                  {/* Tempo de Execução para quem já foi concluído */}
-                  {isSolved && executionTime && (
-                    <span
-                      title={`Tempo de execução: ${executionTime}ms`}
-                      className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-bold bg-emerald-50 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-400 border border-emerald-200/80 dark:border-emerald-800/60 flex-shrink-0"
-                    >
-                      <Zap className="w-3.5 h-3.5 text-amber-500 fill-amber-400" />
-                      <span>{executionTime}ms</span>
+                  {/* 3. Título do Desafio ocupando todo o espaço restante + 4. Tempo de Execução */}
+                  <div className="flex items-center gap-2.5 min-w-0 flex-1 flex-wrap">
+                    <span className="font-bold text-slate-900 dark:text-slate-100 text-base sm:text-lg leading-snug group-hover:text-indigo-600 dark:group-hover:text-indigo-400 transition-colors">
+                      <span className="text-slate-400 dark:text-slate-500 font-normal mr-2">
+                        #{q.id}.
+                      </span>
+                      {q.title}
                     </span>
-                  )}
-                </div>
-              </div>
 
-              {/* Lado Direito: Tags de Categorias (ordenadas alfabeticamente) + Chevron */}
-              <div className="flex items-center gap-2.5 sm:gap-3 flex-shrink-0 justify-start sm:justify-end pl-9 sm:pl-0 sm:ml-auto">
-                <div className="flex flex-wrap items-center justify-start sm:justify-end gap-1.5 sm:gap-2">
+                    {/* Tempo de Execução para quem já foi concluído */}
+                    {isSolved && executionTime && (
+                      <span
+                        title={`Tempo de execução: ${executionTime}ms`}
+                        className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-bold bg-emerald-50 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-400 border border-emerald-200/80 dark:border-emerald-800/60 flex-shrink-0"
+                      >
+                        <Zap className="w-3.5 h-3.5 text-amber-500 fill-amber-400" />
+                        <span>{executionTime}ms</span>
+                      </span>
+                    )}
+                  </div>
+                </div>
+
+                {/* Linha inferior: Tags de Categorias (ordenadas alfabeticamente) alinhadas à direita */}
+                <div className="flex flex-wrap items-center justify-end gap-1.5 sm:gap-2 w-full">
                   {questionCategories.map((catName, idx) => {
                     const meta = getCategoryMeta(catName);
                     const CatIcon = meta.icon;
@@ -279,10 +281,10 @@ export default function QuestionDashboard({ user, questions = [], onSelectQuesti
                     );
                   })}
                 </div>
-
-                {/* Chevron indicando interatividade da linha */}
-                <ChevronRight className="w-5 h-5 text-slate-300 dark:text-slate-600 group-hover:text-slate-500 dark:group-hover:text-slate-300 group-hover:translate-x-0.5 transition-all flex-shrink-0 hidden sm:block" />
               </div>
+
+              {/* Chevron indicando interatividade da linha */}
+              <ChevronRight className="w-5 h-5 text-slate-300 dark:text-slate-600 group-hover:text-slate-500 dark:group-hover:text-slate-300 group-hover:translate-x-0.5 transition-all flex-shrink-0 hidden sm:block" />
             </div>
           );
         })}
