@@ -25,6 +25,8 @@ __pycache__/
 !.env.example
 
 # Docker & Ministack Local Data
+data/
+/data/
 ministack/data/
 **/data/s3/
 *.log

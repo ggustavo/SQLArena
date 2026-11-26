@@ -27,8 +27,10 @@ from kafka import KafkaAdminClient, KafkaConsumer, KafkaProducer, OffsetAndMetad
 from kafka.admin import NewTopic
 from kafka.errors import KafkaError, TopicAlreadyExistsError
 
-# Carrega variáveis do arquivo central app/.env de forma confiável
-_env_path = Path(__file__).resolve().parent.parent / ".env"
+# Carrega variáveis do arquivo central .env na raiz do projeto
+_root_env = Path(__file__).resolve().parent.parent.parent / ".env"
+_app_env = Path(__file__).resolve().parent.parent / ".env"
+_env_path = _root_env if _root_env.exists() else _app_env
 if _env_path.exists():
     load_dotenv(dotenv_path=_env_path)
 else:

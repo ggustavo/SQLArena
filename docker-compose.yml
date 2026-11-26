@@ -27,7 +27,7 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgrespassword}
       POSTGRES_DB: ${POSTGRES_DB:-app_db}
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - ./data/postgres:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-app_db}"]
       interval: 5s
@@ -50,7 +50,7 @@ services:
       POSTGRES_PASSWORD: ${SANDBOX_POSTGRES_PASSWORD:-sandboxpass}
       POSTGRES_DB: ${SANDBOX_POSTGRES_DB:-sandbox_db}
     volumes:
-      - sandbox_data:/var/lib/postgresql/data
+      - ./data/postgres-sandbox:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${SANDBOX_POSTGRES_USER:-sandbox} -d ${SANDBOX_POSTGRES_DB:-sandbox_db}"]
       interval: 5s
@@ -70,7 +70,7 @@ services:
       - "16379:6379"
     command: ["redis-server", "--appendonly", "yes"]
     volumes:
-      - redis_data:/data
+      - ./data/redis:/data
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -94,7 +94,7 @@ services:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin123}
     volumes:
-      - minio_data:/data
+      - ./data/minio:/data
     healthcheck:
       test: ["CMD-SHELL", "curl -f http://localhost:9000/minio/health/live || exit 1"]
       interval: 5s
@@ -127,7 +127,7 @@ services:
       KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
       KAFKA_NUM_PARTITIONS: 3
     volumes:
-      - kafka_data:/var/lib/kafka/data
+      - ./data/kafka:/var/lib/kafka/data
     healthcheck:
       test: ["CMD-SHELL", "/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:29092 --list || exit 1"]
       interval: 10s
@@ -216,8 +216,8 @@ services:
   worker:
     build:
       context: .
-      dockerfile: app/Dockerfile
-    image: sqlarena-backend:latest
+      dockerfile: app/worker/Dockerfile
+    image: sqlarena-worker:latest
     container_name: sqlarena-worker
     restart: unless-stopped
     command: ["python", "app/worker/main.py"]
@@ -275,13 +275,6 @@ services:
         condition: service_healthy
     networks:
       - sqlarena-net
-
-volumes:
-  postgres_data:
-  sandbox_data:
-  redis_data:
-  minio_data:
-  kafka_data:
 
 networks:
   sqlarena-net:

@@ -1,5 +1,5 @@
 # ==============================================================================
-# Dockerfile do Backend e Worker (FastAPI + Worker Kafka/MinIO/Postgres)
+# Dockerfile do Backend (API REST FastAPI + Seed Inicial + Conexão com AWS DynamoDB)
 # ==============================================================================
 FROM python:3.11-slim
 

@@ -3,7 +3,9 @@ from pathlib import Path
 from typing import Optional
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-_env_file = Path(__file__).resolve().parent / ".env"
+_root_env = Path(__file__).resolve().parent.parent / ".env"
+_app_env = Path(__file__).resolve().parent / ".env"
+_env_file = _root_env if _root_env.exists() else _app_env
 
 class Settings(BaseSettings):
     ENVIRONMENT: str = "local"

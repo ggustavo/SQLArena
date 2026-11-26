@@ -76,7 +76,7 @@ spec:
         # Container 2: Worker Assíncrono (Kafka + MinIO + 127.0.0.1:5432)
         # ----------------------------------------------------------------------
         - name: worker
-          image: sqlarena-backend:latest
+          image: sqlarena-worker:latest
           imagePullPolicy: IfNotPresent
           command: ["python", "app/worker/main.py"]
           envFrom:

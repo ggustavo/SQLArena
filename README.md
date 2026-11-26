@@ -25,8 +25,8 @@ A arquitetura do SQLArena é composta por microsserviços e serviços de dados c
 ```text
 SQLArena/
 ├── app/
-│   ├── Dockerfile              # Imagem unificada do Backend (FastAPI) e Worker
-│   ├── entrypoint.sh           # Script de inicialização fail-fast e seed automático (--if-empty)
+│   ├── Dockerfile              # Dockerfile do Backend (FastAPI API REST)
+│   ├── entrypoint.sh           # Script de inicialização (health-wait, seed automático e exec)
 │   ├── api/                    # Endpoints REST (auth, questions, submissions, audit, users, ranking)
 │   ├── cache/                  # Cliente Redis (Rate Limit de 5s e cache de ranking)
 │   ├── database/               # PostgreSQL Principal (models SQLAlchemy, seed.py idempotente)
@@ -34,10 +34,19 @@ SQLArena/
 │   ├── kafka/                  # Gerenciador do Apache Kafka (com commits e retries resilientes)
 │   ├── minio/                  # Gerenciador do MinIO S3-Compatible
 │   ├── worker/                 # Motor de avaliação em Sandbox PostgreSQL
+│   │   ├── Dockerfile          # Dockerfile do Worker (Consumidor Kafka + Sandbox PG)
+│   │   ├── main.py             # Loop consumidor do Worker
+│   │   └── executor.py         # Execução e comparação estrita de consultas SQL
 │   ├── config.py               # Variáveis e configurações Pydantic
 │   └── main.py                 # Ponto de entrada FastAPI com health check real
+├── data/                       # Diretório local unificado de dados persistidos (no .gitignore)
+│   ├── postgres/               # Dados do PostgreSQL Principal
+│   ├── postgres-sandbox/       # Dados do PostgreSQL Sandbox do Worker
+│   ├── redis/                  # Dados persistidos do Redis
+│   ├── minio/                  # Arquivos e scripts SQL salvos no MinIO
+│   └── kafka/                  # Logs e partições do Apache Kafka
 ├── frontend/
-│   ├── Dockerfile              # Imagem Multi-Stage (Node 20 Build -> Nginx 1.27 Alpine)
+│   ├── Dockerfile              # Dockerfile do Frontend (React 19 Build -> Nginx 1.27 Alpine)
 │   ├── nginx.conf.template     # Template Nginx com proxy dinâmico para /api
 │   └── src/                    # SPA React 19, Tailwind CSS v4 e Monaco Editor
 ├── k8s/                        # Manifestos Kubernetes Locais
@@ -60,8 +69,8 @@ SQLArena/
 │   └── providers.tf            # Provedor AWS
 ├── ministack/                  # Emulador local de serviços AWS (para execução offline do DynamoDB)
 │   └── docker-compose.yml      # Ministack na porta 4566
-├── docker-compose.yml          # Orquestração principal de TODOS os containers da aplicação
-└── .env.example                # Modelo de variáveis de ambiente
+├── docker-compose.yml          # Orquestração de TODOS os containers com volumes mapeados em ./data/
+└── .env.example                # Único modelo de variáveis de ambiente do projeto
 ```
 
 ---
@@ -154,15 +163,20 @@ Com o DynamoDB configurado no **Passo 1**, escolha o método de execução da ap
 
 ### 🐳 CAMINHO A: Executar via Docker Compose
 
-O arquivo [`docker-compose.yml`](docker-compose.yml) orquestra de forma integrada todos os 8 containers:
-- `sqlarena-postgres`: PostgreSQL 16 Principal (porta `15432`)
-- `sqlarena-postgres-sandbox`: PostgreSQL 16 Sandbox isolado para queries de alunos (porta `15433`)
-- `sqlarena-redis`: Redis 7 (porta `16379`)
-- `sqlarena-minio`: MinIO Object Storage (porta `9000` / Console `9001`)
-- `sqlarena-kafka`: Apache Kafka 3.8 em modo KRaft (porta `9092`)
-- `sqlarena-backend`: API FastAPI na porta `8000` (com seed automático seguro `--if-empty`)
-- `sqlarena-worker`: Consumidor assíncrono do Kafka
-- `sqlarena-frontend`: React SPA servida via Nginx na porta `80` (e `5173`)
+O arquivo [`docker-compose.yml`](docker-compose.yml) orquestra de forma integrada todos os 8 containers com **3 Dockerfiles dedicados** e armazenamento persistente mapeado diretamente no diretório local `./data/`:
+
+* **Imagens criadas via Dockerfile:**
+  * `sqlarena-backend:latest` (`app/Dockerfile`) — API FastAPI na porta `8000` (com seed automático seguro `--if-empty`).
+  * `sqlarena-worker:latest` (`app/worker/Dockerfile`) — Consumidor assíncrono do Kafka e motor de avaliação.
+  * `sqlarena-frontend:latest` (`frontend/Dockerfile`) — React SPA servida via Nginx na porta `80` (e `5173`).
+* **Serviços de dados (com volumes mapeados no diretório local `./data/`):**
+  * `sqlarena-postgres`: PostgreSQL 16 Principal (porta `15432`) -> `./data/postgres`
+  * `sqlarena-postgres-sandbox`: PostgreSQL 16 Sandbox isolado (porta `15433`) -> `./data/postgres-sandbox`
+  * `sqlarena-redis`: Redis 7 (porta `16379`) -> `./data/redis`
+  * `sqlarena-minio`: MinIO Object Storage (porta `9000` / Console `9001`) -> `./data/minio`
+  * `sqlarena-kafka`: Apache Kafka 3.8 em modo KRaft (porta `9092`) -> `./data/kafka`
+
+> 💡 **Vantagem da pasta `./data/`:** Todos os dados persistidos ficam visíveis no seu explorador de arquivos em uma única pasta ignorada pelo Git. Você não precisa inspecionar volumes internos do Docker.
 
 #### 1. Iniciar toda a aplicação com 1 comando:
 Na raiz do projeto (`SQLArena/`), execute:
@@ -170,7 +184,7 @@ Na raiz do projeto (`SQLArena/`), execute:
 docker compose up -d --build
 ```
 
-O comando irá construir as imagens locais, aguardar os health checks das dependências e iniciar a API, o Worker e o Frontend.
+O comando irá construir as 3 imagens locais via Dockerfile, aguardar os health checks das dependências e iniciar a API, o Worker e o Frontend.
 
 #### 2. Verificar o status dos containers:
 ```powershell
@@ -179,13 +193,14 @@ docker compose ps
 Todos os containers devem exibir o status **`Up (healthy)`** ou **`Up`**.
 
 #### 3. Para pausar ou resetar a aplicação:
-* **Pausar mantendo os dados salvos:**
+* **Pausar mantendo os dados salvos em `./data/`:**
   ```powershell
   docker compose down
   ```
-* **Resetar completamente (apagar containers, volumes e redes locais):**
+* **Resetar completamente (apagar containers, redes e a pasta de dados `./data/`):**
   ```powershell
   docker compose down -v
+  Remove-Item -Recurse -Force data
   ```
 
 ---
