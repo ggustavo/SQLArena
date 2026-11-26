@@ -1,9 +1,8 @@
 # ==============================================================================
-# AMBIENTE LOCAL: Cria apenas as tabelas do DynamoDB no Ministack local (Porta 4566)
+# AMBIENTE LOCAL: Provisiona tabelas DynamoDB no Ministack local (Porta 4566)
 # ==============================================================================
 project_name             = "sqlarena"
 environment              = "local"
-deploy_mode              = "local"
 is_local                 = true
 aws_region               = "us-east-1"
 aws_access_key           = "test"

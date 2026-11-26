@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Script Mestre para Destruir 100% da Infraestrutura SQLArena na AWS (Modo 1 EKS ou Modo 2 EC2 Compose).
+Script para Destruir as Tabelas do DynamoDB no SQLArena (Terraform).
 """
 
 import argparse
@@ -22,11 +22,11 @@ def run_command(cmd, cwd=None):
     return res.returncode
 
 def main():
-    parser = argparse.ArgumentParser(description="Destruição Completa do SQLArena (Terraform)")
+    parser = argparse.ArgumentParser(description="Destruição das Tabelas DynamoDB (Terraform)")
     parser.add_argument(
-        "--var-file",
-        default="envs/modo2-ec2-compose.tfvars",
-        help="Arquivo .tfvars do modo ativo (ex: envs/modo1-eks.tfvars ou envs/modo2-ec2-compose.tfvars)"
+        "--local",
+        action="store_true",
+        help="Destruir no Ministack local (usa envs/local.tfvars)"
     )
     parser.add_argument(
         "--auto-approve",
@@ -36,24 +36,17 @@ def main():
     )
     args = parser.parse_args()
 
-    tfvars_path = _terraform_dir / args.var_file
     print("=" * 80)
-    print("🔥 INICIANDO DESTRUIÇÃO DA INFRAESTRUTURA SQLARENA")
+    print("🔥 DESTRUINDO TABELAS DYNAMODB DO SQLARENA")
     print(f" • Diretório Terraform: {_terraform_dir}")
-    print(f" • Arquivo de variáveis: {tfvars_path}")
     print("=" * 80)
 
     approve_flag = "-auto-approve" if args.auto_approve else ""
-    var_flags = []
-    if tfvars_path.exists():
-        var_flags.append(f'-var-file="{args.var_file}"')
+    var_file = "envs/local.tfvars" if args.local else "envs/credentials.tfvars"
+    var_path = _terraform_dir / var_file
 
-    cred_file = _terraform_dir / "envs" / "credentials.tfvars"
-    if cred_file.exists():
-        var_flags.append('-var-file="envs/credentials.tfvars"')
-
-    var_flags_str = " ".join(var_flags)
-    tf_cmd = f"terraform destroy {var_flags_str} {approve_flag}".strip()
+    var_flags = f'-var-file="{var_file}"' if var_path.exists() else ""
+    tf_cmd = f"terraform destroy {var_flags} {approve_flag}".strip()
     run_command(tf_cmd, cwd=str(_terraform_dir))
 
     print("\n" + "=" * 80)
