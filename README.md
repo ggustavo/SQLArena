@@ -15,7 +15,8 @@ A arquitetura do SQLArena é composta por microsserviços e serviços de dados c
 | **Armazenamento de Objetos** | **MinIO** (`elestio/minio:latest`) | Armazenamento S3-compatible de scripts SQL de cada exercício (`schema.sql`, `data.sql`, `answer.sql`) e avatares de usuários. |
 | **Mensageria Assíncrona** | **Apache Kafka** (`apache/kafka:3.8.0`) | Broker em modo KRaft com tópicos particionados (`sqlarena-submissions-queue`), Consumer Groups e Dead Letter Queue (DLQ). |
 | **Cache & Rate Limit** | **Redis 7** (`redis:7-alpine`) | Controle de taxa de submissão (5s por usuário), cache de ranking global e estado de processamento em tempo real. |
-| **Backend API & Worker** | **`app/Dockerfile`** (Python 3.11 / FastAPI) | API RESTful com autenticação JWT, validação de regras de negócio, health check real e motor worker de avaliação de queries. |
+| **Backend API** | **`app/Dockerfile`** (Python 3.11 / FastAPI) | API RESTful com autenticação JWT, validação de regras de negócio, health check real e seed automático. |
+| **Worker de Avaliação** | **`app/worker/Dockerfile`** (Python 3.11) | Motor de execução em background consumidor do Kafka para execução e validação de queries SQL em sandbox. |
 | **Frontend Web** | **`frontend/Dockerfile`** (React 19 / Nginx) | SPA em React 19 com Monaco Editor, Tailwind CSS e Nginx atuando como reverse proxy para a API. |
 
 ---
@@ -49,9 +50,8 @@ SQLArena/
 │   ├── Dockerfile              # Dockerfile do Frontend (React 19 Build -> Nginx 1.27 Alpine)
 │   ├── nginx.conf.template     # Template Nginx com proxy dinâmico para /api
 │   └── src/                    # SPA React 19, Tailwind CSS v4 e Monaco Editor
-├── k8s/                        # Manifestos Kubernetes Locais
-│   ├── 01-configmap.yaml       # Variáveis de ambiente não-sensíveis (com suporte a AWS ou Ministack)
-│   ├── 02-secrets.yaml         # Secrets (senhas Postgres, MinIO e chaves AWS DynamoDB)
+├── k8s/                        # Manifestos Kubernetes Locais (100% agnósticos)
+│   ├── 01-configmap.yaml       # Configurações não-sensíveis dos serviços do cluster
 │   ├── 03-postgres-main.yaml   # Deployment + PVC + Service ClusterIP do Postgres Principal
 │   ├── 04-redis.yaml           # Deployment + Service ClusterIP do Redis
 │   ├── 05-minio.yaml           # Deployment + PVC + Service ClusterIP e NodePort (30901) do MinIO
@@ -87,12 +87,12 @@ A primeira etapa consiste em definir se a aplicação utilizará o **Amazon Dyna
 
 Primeiro, crie o arquivo `.env` na raiz do projeto copiando o modelo de exemplo:
 
-```powershell
+```bash
+# macOS / Linux:
+cp .env.example .env
+
 # Windows (PowerShell):
 Copy-Item .env.example .env
-
-# Linux / macOS:
-cp .env.example .env
 ```
 
 Agora, escolha **uma** das duas opções a seguir para o DynamoDB:
@@ -112,7 +112,7 @@ Agora, escolha **uma** das duas opções a seguir para o DynamoDB:
      ```
    * Abra o arquivo `credentials.tfvars` e insira suas credenciais ativas da AWS (`aws_access_key`, `aws_secret_key` e `aws_session_token`).
    * Retorne à pasta `terraform` e aplique o plano:
-     ```powershell
+     ```bash
      cd ..
      terraform init
      terraform apply -var-file="envs/credentials.tfvars" -auto-approve
@@ -147,7 +147,7 @@ Agora, escolha **uma** das duas opções a seguir para o DynamoDB:
 
 2. **Iniciar o container do Ministack:**
    Execute no terminal para inicializar o emulador local na porta `4566`:
-   ```powershell
+   ```bash
    docker compose -f ministack/docker-compose.yml up -d
    ```
 
@@ -160,7 +160,7 @@ Agora, escolha **uma** das duas opções a seguir para o DynamoDB:
 Com o DynamoDB configurado no **Passo 1**, escolha o método de execução da aplicação:
 
 * **[Caminho A: Docker Compose](#-caminho-a-executar-via-docker-compose)** (Execução unificada de todos os containers)
-* **[Caminho B: Kubernetes Local](#-caminho-b-executar-via-kubernetes-local)** (Orquestração via Pods Multi-Container, Services e HPA)
+* **[Caminho B: Kubernetes](#-caminho-b-executar-via-kubernetes)** (Orquestração via Pods Multi-Container, Services e HPA)
 
 ---
 
@@ -183,14 +183,14 @@ O arquivo [`docker-compose.yml`](docker-compose.yml) orquestra de forma integrad
 
 #### 1. Iniciar toda a aplicação com 1 comando:
 Na raiz do projeto (`SQLArena/`), execute:
-```powershell
+```bash
 docker compose up -d --build
 ```
 
 O comando irá construir as 3 imagens locais via Dockerfile, aguardar os health checks das dependências e iniciar a API, o Worker e o Frontend.
 
 #### 2. Verificar o status dos containers:
-```powershell
+```bash
 docker compose ps
 ```
 Todos os containers devem exibir o status **`Up (healthy)`** ou **`Up`**.
@@ -213,9 +213,9 @@ Todos os containers devem exibir o status **`Up (healthy)`** ou **`Up`**.
 
 ---
 
-### ☸️ CAMINHO B: Executar via Kubernetes Local
+### ☸️ CAMINHO B: Executar via Kubernetes
 
-A aplicação disponibiliza manifestos para execução em clusters locais (**Docker Desktop com Kubernetes ativado** ou **Minikube**) utilizando topologia de Pods Multi-Container:
+A aplicação disponibiliza manifestos 100% compatíveis com qualquer cluster Kubernetes local (**OrbStack**, **Docker Desktop**, **K3s**, etc.) utilizando topologia de Pods Multi-Container:
 
 ```mermaid
 flowchart TB
@@ -223,7 +223,7 @@ flowchart TB
         Dynamo[("📄 Amazon DynamoDB\n(Submissões & Auditoria CRUD)")]
     end
 
-    subgraph ClusterK8s["☸️ Kubernetes Local (Minikube / Docker Desktop)"]
+    subgraph ClusterK8s["☸️ Cluster Kubernetes"]
         NP["🌐 Service NodePort (30080)\nAcesso Externo"]
         CIP["🔗 Service ClusterIP (sqlarena-web-clusterip:8000)\nComunicação Interna"]
 
@@ -263,57 +263,20 @@ flowchart TB
 * **POD 1 — `sqlarena-web` (`k8s/07-web-pod.yaml`):** Co-localiza o **Frontend** e o **Backend** no mesmo Pod. O Nginx atende na porta `80` e repassa requisições `/api` via loopback interno (`http://127.0.0.1:8000`). Exposto externamente via Service **NodePort** (`30080`) e internamente via Service **ClusterIP**.
 * **POD 2 — `sqlarena-worker` (`k8s/08-worker-pod.yaml`):** Padrão **Sidecar** co-localizando o **Worker Python** e o **PostgreSQL Sandbox** isolado (`127.0.0.1:5432`). Ao escalar via HPA, cada réplica ganha seu próprio sandbox independente.
 
-#### 1. Iniciar o cluster local:
+#### 1. Aplicar a aplicação com `kubectl` (Leitura direta do `.env`):
 
-Escolha uma das opções conforme seu ambiente:
+Você **não precisa editar nenhum arquivo YAML do Kubernetes**. O Kubernetes lê diretamente o arquivo `.env` configurado no **Passo 1**:
 
-* **Opção 1 (macOS com OrbStack — Mais leve e recomendada):**
-  * Abra o OrbStack -> Vá em **Settings / Preferences** -> Aba **Kubernetes** -> Marque **Enable Kubernetes**.
-  * *Vantagem no OrbStack:* Ele já compartilha diretamente as imagens criadas pelo Docker (`sqlarena-backend:latest`, `sqlarena-worker:latest`, `sqlarena-frontend:latest`) e expõe as portas NodePort diretamente em `http://localhost:30080` sem precisar de túneis!
-* **Opção 2 (Minikube — Padrão multiplataforma macOS/Linux/Windows):**
-  * Se ainda não tiver o CLI instalado no macOS: `brew install minikube`
-  * Inicie o cluster rodando como container Docker:
-    ```bash
-    minikube start --driver=docker
-    ```
-    *(O Minikube roda como um container gerenciado pelo OrbStack/Docker).*
-  * Como o Minikube possui um daemon interno isolado, carregue as imagens locais:
-    ```bash
-    minikube image load sqlarena-backend:latest sqlarena-worker:latest sqlarena-frontend:latest
-    ```
-* **Opção 3 (Docker Desktop):**
-  * Abra Settings -> **Kubernetes** -> Marque **Enable Kubernetes** -> **Apply & restart**.
+```bash
+# 1. Carrega todos os segredos do .env automaticamente no cluster:
+kubectl create secret generic sqlarena-secrets --from-env-file=.env --dry-run=client -o yaml | kubectl apply -f -
 
-#### 2. Configurar o Kubernetes conforme o modo de DynamoDB escolhido no Passo 1:
-O cluster opera de forma transparente tanto com a AWS real quanto com o Ministack local:
-* **Se escolheu a AWS Real (Opção 1.A):**
-  Abra [`k8s/02-secrets.yaml`](k8s/02-secrets.yaml) e preencha suas credenciais ativas da AWS:
-  ```yaml
-  AWS_ACCESS_KEY_ID: "ASIA..."
-  AWS_SECRET_ACCESS_KEY: "..."
-  AWS_SESSION_TOKEN: "IQoJ..."
-  ```
-  *(O arquivo `k8s/01-configmap.yaml` já possui `DYNAMODB_ENDPOINT_URL: ""` por padrão).*
-* **Se escolheu o Ministack Offline (Opção 1.B):**
-  Em [`k8s/02-secrets.yaml`](k8s/02-secrets.yaml), defina:
-  ```yaml
-  AWS_ACCESS_KEY_ID: "test"
-  AWS_SECRET_ACCESS_KEY: "test"
-  AWS_SESSION_TOKEN: ""
-  ```
-  E em [`k8s/01-configmap.yaml`](k8s/01-configmap.yaml), defina:
-  ```yaml
-  DYNAMODB_ENDPOINT_URL: "http://host.docker.internal:4566"
-  ```
-
-#### 3. Aplicar os manifestos no Kubernetes:
-Na raiz do projeto, execute:
-```powershell
+# 2. Inicializa todos os serviços, Pods e autoscaling (HPA):
 kubectl apply -f k8s/
 ```
 
-#### 4. Verificar Pods e Services:
-```powershell
+#### 2. Verificar Pods e Services:
+```bash
 # Verifique se todos os Pods estão 'Running' (observe READY 2/2 nos Pods Web e Worker):
 kubectl get pods
 
@@ -324,9 +287,10 @@ kubectl get services
 kubectl get hpa
 ```
 
-#### 5. Para encerrar o Kubernetes:
-```powershell
+#### 3. Para encerrar o Kubernetes:
+```bash
 kubectl delete -f k8s/
+kubectl delete secret sqlarena-secrets
 ```
 
 ---
@@ -341,8 +305,6 @@ Após a inicialização (seja por **Docker Compose** ou **Kubernetes**), acesse 
 | **Documentação da API (Swagger)** | [http://localhost:8000/docs](http://localhost:8000/docs) | [http://localhost:30800/docs](http://localhost:30800/docs) | Acesso livre |
 | **Console Web do MinIO Storage** | [http://localhost:9001](http://localhost:9001) | [http://localhost:30901](http://localhost:30901) | **Usuário:** `minioadmin`<br>**Senha:** `minioadmin123` |
 
-*(Nota para usuários de Minikube: caso as portas NodePort não abram diretamente pelo localhost, execute `minikube service sqlarena-web-nodeport` para abrir o túnel).*
-
 ---
 
 ### PASSO 4: Credenciais Pré-configuradas para Teste
@@ -356,46 +318,58 @@ O seed da aplicação cadastra automaticamente dois perfis para validação do s
 
 ---
 
-### PASSO 5: Executar a Suíte de Testes Automatizados
-
-Para validar o funcionamento dos serviços, segurança de callback, health check e Kafka:
-
-* **Se estiver executando com Docker Compose:**
-  ```powershell
-  # Testes de segurança, autenticação de callback, resiliência do Kafka e healthcheck real:
-  docker exec sqlarena-backend pytest app/testes/test_security_and_reliability.py -v
-
-  # Execução de todos os testes unitários e de integração:
-  docker exec sqlarena-backend pytest app/testes/ -v
-  ```
-
-* **Se estiver executando no Kubernetes:**
-  ```powershell
-  kubectl exec -it deployment/sqlarena-web -c backend -- pytest app/testes/test_security_and_reliability.py -v
-  ```
-
----
-
-### PASSO 6: Limpeza e Finalização (Tear Down)
+### PASSO 5: Limpeza e Finalização (Tear Down)
 
 Ao encerrar os testes:
 
 1. **Se utilizou a AWS Real (Terraform):**
    Para evitar custos na sua conta AWS, destrua as tabelas do DynamoDB:
-   ```powershell
+   ```bash
    cd terraform
    terraform destroy -var-file="envs/credentials.tfvars" -auto-approve
    cd ..
    ```
 2. **Se utilizou o Docker Compose:**
-   ```powershell
+   ```bash
    docker compose down -v
    ```
 3. **Se utilizou o Ministack local:**
-   ```powershell
+   ```bash
    docker compose -f ministack/docker-compose.yml down -v
    ```
 4. **Se utilizou o Kubernetes:**
-   ```powershell
+   ```bash
    kubectl delete -f k8s/
+   kubectl delete secret sqlarena-secrets
    ```
+
+---
+
+## 💻 Apêndice: Como Habilitar o Kubernetes no seu Sistema Operacional
+
+Os manifestos da pasta `k8s/` utilizam exclusivamente a ferramenta padrão **`kubectl`** e funcionam em qualquer sistema:
+
+### 🍎 macOS (com OrbStack ou Docker Desktop)
+* **OrbStack (Mais leve e rápido — Recomendado):**
+  1. Abra o OrbStack.
+  2. Vá em **Settings / Preferences** (ícone de engrenagem) -> aba **Kubernetes**.
+  3. Marque **Enable Kubernetes**.
+  4. Pronto! O `kubectl` já estará configurado e as portas NodePort abrem nativamente no `localhost:30080`.
+* **Docker Desktop no Mac:**
+  Abra Settings -> **Kubernetes** -> Marque **Enable Kubernetes** -> **Apply & restart**.
+
+### 🪟 Windows (com Docker Desktop)
+1. Abra o Docker Desktop.
+2. Clique no ícone de engrenagem (Settings) no canto superior direito.
+3. Acesse a aba **Kubernetes**.
+4. Marque a caixa **Enable Kubernetes** e clique em **Apply & restart**.
+5. Aguarde o indicador do Kubernetes no rodapé do Docker Desktop ficar verde.
+
+### 🐧 Linux (com K3s ou Docker Desktop)
+* **Opção K3s (1 comando — Super leve):**
+  ```bash
+  curl -sfL https://get.k3s.io | sh -
+  export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
+  ```
+* **Opção Docker Desktop for Linux:**
+  Mesmo procedimento do Windows (Settings -> Kubernetes -> Enable).
