@@ -1,6 +1,6 @@
 import uuid
 from datetime import datetime, timezone
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any, List, Union
 from fastapi import APIRouter, Depends, HTTPException, status, Query, Header
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
@@ -28,8 +28,8 @@ class SubmitQueryRequest(BaseModel):
 class SubmissionCallbackRequest(BaseModel):
     submission_id: Optional[str] = None
     submissionId: Optional[str] = None
-    user_id: Optional[str] = None
-    userId: Optional[str] = None
+    user_id: Optional[Union[str, int]] = None
+    userId: Optional[Union[str, int]] = None
     question_id: Optional[int] = None
     questionId: Optional[int] = None
     status: str = "DONE"
@@ -175,11 +175,12 @@ def process_submission_callback(
       3. Atualiza o resultado final no Amazon DynamoDB.
     """
     # Validação de segurança básica da chave interna
-    if settings.INTERNAL_API_KEY and x_internal_key and x_internal_key != settings.INTERNAL_API_KEY:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Chave de comunicação interna inválida."
-        )
+    if settings.INTERNAL_API_KEY:
+        if not x_internal_key or x_internal_key != settings.INTERNAL_API_KEY:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Chave de comunicação interna inválida ou ausente."
+            )
 
     sub_id = payload.submission_id or payload.submissionId
     uid = payload.user_id or payload.userId

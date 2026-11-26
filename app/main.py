@@ -182,11 +182,52 @@ async def handle_db_operational_error(request: Request, exc: OperationalError):
 @app.get("/health", tags=["Health"])
 @app.get("/api/health", tags=["Health"])
 def health_check():
-    return {
-        "status": "healthy",
+    checks = {}
+    is_healthy = True
+
+    # 1. PostgreSQL Principal
+    try:
+        with engine.connect() as conn:
+            conn.execute(text("SELECT 1"))
+        checks["postgres"] = "healthy"
+    except Exception as e:
+        is_healthy = False
+        checks["postgres"] = f"unhealthy: {e}"
+
+    # 2. Redis
+    try:
+        if redis_client.ping():
+            checks["redis"] = "healthy"
+        else:
+            is_healthy = False
+            checks["redis"] = "unhealthy: ping returned False"
+    except Exception as e:
+        is_healthy = False
+        checks["redis"] = f"unhealthy: {e}"
+
+    # 3. MinIO (armazenamento de arquivos)
+    try:
+        minio_mgr = MinioManager()
+        minio_mgr.s3.head_bucket(Bucket=minio_mgr.bucket_name)
+        checks["minio"] = "healthy"
+    except Exception as e:
+        is_healthy = False
+        checks["minio"] = f"unhealthy: {e}"
+
+    response_payload = {
+        "status": "healthy" if is_healthy else "unhealthy",
         "service": "sqlarena-web-api",
-        "environment": settings.ENVIRONMENT
+        "environment": settings.ENVIRONMENT,
+        "checks": checks
     }
+
+    if not is_healthy:
+        return JSONResponse(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            content=response_payload
+        )
+
+    return response_payload
 
 # Registro dos Roteadores da API
 app.include_router(auth_router, prefix="/api")

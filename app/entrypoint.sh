@@ -23,7 +23,7 @@ for i in range(30):
         print(f'[Entrypoint] Aguardando PostgreSQL ({i+1}/30): {e}')
         time.sleep(2)
 "
-    python app/database/seed.py --if-empty || echo "[Entrypoint] ⚠ Aviso durante execução do seed inicial (continuando boot da API)."
+    python app/database/seed.py --if-empty
 fi
 
 # Se for o Worker, aguarda o PostgreSQL Sandbox local estar aceitando conexões

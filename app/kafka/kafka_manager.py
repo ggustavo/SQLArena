@@ -276,20 +276,24 @@ class KafkaQueueManager:
                         logger.warning(
                             f"Mensagem {handle} excedeu 5 tentativas. Movendo para DLQ '{self.dlq_name}'."
                         )
+                        dlq_ok = False
                         try:
                             producer = self._get_producer()
                             producer.send(self.dlq_name, value=raw_body).get(timeout=5)
                             consumer.commit({tp: OffsetAndMetadata(offset + 1, "")})
+                            dlq_ok = True
                         except Exception as dlq_err:
                             logger.error(f"Erro ao mover mensagem para DLQ: {dlq_err}")
-                        self._uncommitted_offsets.pop(handle, None)
-                        self._retry_counts.pop(handle, None)
+
+                        if dlq_ok:
+                            self._uncommitted_offsets.pop(handle, None)
+                            self._retry_counts.pop(handle, None)
                     else:
                         try:
                             consumer.seek(tp, offset)
-                        except Exception:
-                            pass
-                        self._uncommitted_offsets.pop(handle, None)
+                            self._uncommitted_offsets.pop(handle, None)
+                        except Exception as seek_err:
+                            logger.error(f"Erro ao resetar seek para mensagem {handle}: {seek_err}")
 
             timeout_ms = max(500, int(wait_time_seconds * 1000))
             deadline = time.time() + max(0.5, float(wait_time_seconds))
@@ -354,17 +358,18 @@ class KafkaQueueManager:
         if not receipt_handle:
             return False
 
-        self._uncommitted_offsets.pop(receipt_handle, None)
-        self._retry_counts.pop(receipt_handle, None)
-
         try:
             parts = receipt_handle.split(":")
             if len(parts) != 3:
+                self._uncommitted_offsets.pop(receipt_handle, None)
+                self._retry_counts.pop(receipt_handle, None)
                 return True
             topic, partition_str, offset_str = parts[0], int(parts[1]), int(parts[2])
             tp = TopicPartition(topic, partition_str)
             consumer = self._get_consumer()
             consumer.commit({tp: OffsetAndMetadata(offset_str + 1, "")})
+            self._uncommitted_offsets.pop(receipt_handle, None)
+            self._retry_counts.pop(receipt_handle, None)
             logger.info(f"Offset confirmado no Kafka com sucesso ({receipt_handle}).")
             return True
         except Exception as e:

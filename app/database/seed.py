@@ -76,7 +76,7 @@ def generate_data_sql(sample_tables: list) -> str:
             
     return "\n\n".join(statements) + "\n"
 
-def seed_database(only_if_empty: bool = False):
+def seed_database(only_if_empty: bool = False, reset_all: bool = False):
     logger.info("Iniciando verificação e seed do banco PostgreSQL, MinIO, Kafka e DynamoDB...")
     
     # 1. Cria tabelas no PostgreSQL
@@ -91,14 +91,13 @@ def seed_database(only_if_empty: bool = False):
     db: Session = SessionLocal()
     try:
         # Se only_if_empty=True (ex: boot de Pod no Kubernetes ou restart de container),
-        # verifica se as questões já estão no Postgres e no MinIO para não zerar progresso existente
+        # verifica se as questões já estão no Postgres para preservar 100% dos dados existentes
         if only_if_empty:
             existing_q_count = db.query(Question).count()
-            minio_ready = minio_manager.file_exists("questions/1/schema.sql")
-            if existing_q_count >= 21 and minio_ready:
+            if existing_q_count >= 21:
                 logger.info(
-                    f"[✓] Ambiente já inicializado ({existing_q_count} questões no Postgres e arquivos no MinIO). "
-                    "Preservando dados existentes."
+                    f"[✓] Ambiente já inicializado ({existing_q_count} questões no Postgres). "
+                    "Preservando dados e progresso existentes."
                 )
                 try:
                     DynamoDBManager().ensure_tables_exist()
@@ -133,7 +132,7 @@ def seed_database(only_if_empty: bool = False):
         db.commit()
         logger.info(f"[✓] {len(cat_map)} categorias cadastradas/verificadas.")
 
-        # 4. Usuários Iniciais: TODOS começam com score 0, sem questões resolvidas
+        # 4. Usuários Iniciais: cadastrados se não existirem; se já existirem, pontuações NUNCA são zeradas (a menos que reset_all=True)
         users_to_seed = [
             {
                 "id": "user_101",
@@ -174,7 +173,7 @@ def seed_database(only_if_empty: bool = False):
                     solved_count=u_data["solved_count"]
                 )
                 db.add(user)
-            else:
+            elif reset_all:
                 user.id = u_data["id"]
                 user.name = u_data["name"]
                 user.email = u_data["email"]
@@ -184,13 +183,14 @@ def seed_database(only_if_empty: bool = False):
                 user.streak_days = 0
                 user.solved_count = 0
         db.commit()
-        logger.info("[✓] Usuários iniciais cadastrados/zerados com sucesso.")
+        logger.info("[✓] Usuários iniciais cadastrados/verificados com sucesso.")
 
-        # Remove qualquer questão resolvida preliminarmente
-        deleted_solved = db.query(UserSolvedQuestion).delete()
-        db.commit()
-        if deleted_solved:
-            logger.info(f"[✓] Removidas {deleted_solved} resoluções mockadas de usuários.")
+        # Remove questões resolvidas APENAS se explicitamente solicitado via reset_all
+        if reset_all:
+            deleted_solved = db.query(UserSolvedQuestion).delete()
+            db.commit()
+            if deleted_solved:
+                logger.info(f"[✓] Removidas {deleted_solved} resoluções mockadas de usuários (--reset-all).")
 
         # 5. Validação dinâmica e povoamento das 21 questões de initial_data.json
         json_path = Path(__file__).resolve().parent / "initial_data.json"
@@ -269,19 +269,22 @@ def seed_database(only_if_empty: bool = False):
         except Exception as e:
             logger.warning(f"Não foi possível sincronizar sequence questions_id_seq: {e}")
 
-        # 8. Garante tabelas do DynamoDB prontas e purgadas de dados residuais
+        # 8. Garante tabelas do DynamoDB prontas (expurgo de dados APENAS se reset_all=True)
         try:
             dynamo = DynamoDBManager()
             dynamo.ensure_tables_exist()
-            with dynamo.table.batch_writer() as batch:
-                scan = dynamo.table.scan(ProjectionExpression="submission_id")
-                for item in scan.get("Items", []):
-                    batch.delete_item(Key={"submission_id": item["submission_id"]})
-            with dynamo.crud_table.batch_writer() as batch:
-                scan = dynamo.crud_table.scan(ProjectionExpression="action_id")
-                for item in scan.get("Items", []):
-                    batch.delete_item(Key={"action_id": item["action_id"]})
-            logger.info("[✓] Tabelas DynamoDB verificadas e expurgadas com sucesso (0 submissões residuais).")
+            if reset_all:
+                with dynamo.table.batch_writer() as batch:
+                    scan = dynamo.table.scan(ProjectionExpression="submission_id")
+                    for item in scan.get("Items", []):
+                        batch.delete_item(Key={"submission_id": item["submission_id"]})
+                with dynamo.crud_table.batch_writer() as batch:
+                    scan = dynamo.crud_table.scan(ProjectionExpression="action_id")
+                    for item in scan.get("Items", []):
+                        batch.delete_item(Key={"action_id": item["action_id"]})
+                logger.info("[✓] Tabelas DynamoDB expurgadas com sucesso (--reset-all ativo).")
+            else:
+                logger.info("[✓] Tabelas DynamoDB verificadas com sucesso.")
         except Exception as e:
             logger.warning(f"Aviso ao inicializar/limpar DynamoDB no seed: {e}")
 
@@ -309,7 +312,12 @@ if __name__ == "__main__":
     parser.add_argument(
         "--if-empty",
         action="store_true",
-        help="Executa o seed completo apenas se o banco ou MinIO ainda estiverem vazios"
+        help="Executa o seed completo apenas se o banco ainda estiver vazio"
+    )
+    parser.add_argument(
+        "--reset-all",
+        action="store_true",
+        help="Limpa e zera pontuações de usuários e tabelas do DynamoDB (somente para testes locais)"
     )
     args = parser.parse_args()
-    seed_database(only_if_empty=args.if_empty)
+    seed_database(only_if_empty=args.if_empty, reset_all=args.reset_all)
