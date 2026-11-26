@@ -174,14 +174,22 @@ flowchart TD
 
         subgraph ServicosDados["🗄️ Pods de Armazenamento"]
             PodPG["Pod Postgres\n(:5432)"]
+            PVC_PG[("💾 PersistentVolumeClaim\npostgres-pvc (5Gi)")]
+            PodPG -.->|"Persistência permanente"| PVC_PG
+
             PodKafka["Pod Kafka\n(:9092)"]
+
             PodMinIO["Pod MinIO\n(:9000)"]
+            PVC_MinIO[("💾 PersistentVolumeClaim\nminio-pvc (5Gi)")]
+            PodMinIO -.->|"Persistência permanente"| PVC_MinIO
         end
 
         subgraph PodWorker["📦 POD 2: sqlarena-worker (Sidecar)"]
             WK["Container Worker\n(Python Consumer)"]
             PGSB["Container Postgres Sandbox\n(127.0.0.1:5432)"]
+            VolEmpty[("⏱️ Volume Efêmero\nemptyDir: {}")]
             WK -- "Executa query no Sandbox\nvia 127.0.0.1:5432" --> PGSB
+            PGSB -.->|"Disco temporário (ciclo do Pod)"| VolEmpty
         end
     end
 

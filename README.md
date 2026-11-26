@@ -253,12 +253,20 @@ flowchart TB
         subgraph PodWorker["📦 POD 2: Deployment 'sqlarena-worker' (Sidecar)"]
             WK["⚡ Container Worker\n(Python Consumer)"]
             PGSB[("🐘 Container Postgres Sandbox\n(Sidecar Local 127.0.0.1:5432)")]
+            VolWorker[("⏱️ Volume Efêmero\nemptyDir: {}")]
             WK -- "Executa SQL do Aluno em\n127.0.0.1:5432 (Isolado)" --> PGSB
+            PGSB -.->|"Monta (/data)"| VolWorker
         end
 
         subgraph ServicosDados["🗄️ Serviços de Infraestrutura no Cluster (ClusterIP)"]
             PGMain[("🐘 Postgres Principal\n(postgres-service:5432)")]
+            PVC_PG[("💾 PersistentVolumeClaim\npostgres-pvc (5Gi)")]
+            PGMain -.->|"Persiste dados em"| PVC_PG
+
             MinIO[("🪣 MinIO Storage\n(minio-service:9000)")]
+            PVC_MinIO[("💾 PersistentVolumeClaim\nminio-pvc (5Gi)")]
+            MinIO -.->|"Persiste arquivos em"| PVC_MinIO
+
             Kafka[["📬 Apache Kafka\n(kafka-service:9092)"]]
             Redis[("🏎️ Redis Cache\n(redis-service:6379)")]
         end
