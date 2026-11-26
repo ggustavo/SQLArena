@@ -134,8 +134,9 @@ class SQLArenaStudent(HttpUser):
                 self.token = data.get("token")
                 self.user_id = data.get("user", {}).get("id")
                 resp.success()
-            elif resp.status_code in (409, 503):
-                # Se já existia ou houve contenção momentânea, tenta login
+            elif resp.status_code in (0, 409, 502, 503, 504):
+                # Se já existia ou houve contenção/instabilidade momentânea, tenta login/fallback
+                time.sleep(random.uniform(0.2, 0.5))
                 login_payload = {"email": self.email, "password": self.password}
                 with self.client.post("/api/auth/login", json=login_payload, catch_response=True, name="/api/auth/login") as log_resp:
                     if log_resp.status_code == 200:
@@ -190,11 +191,15 @@ class SQLArenaStudent(HttpUser):
     @task(15)
     def view_my_submissions_history(self):
         """Visualiza o histórico de submissões do próprio aluno."""
-        self.client.get("/api/submissions/history/me", name="/api/submissions/history/me")
+        if not self.token:
+            return
+        self.client.get("/api/submissions/history", name="/api/submissions/history")
 
     @task(5)
     def update_profile(self):
         """Atualiza nome do perfil (estressa log de auditoria no DynamoDB e invalidação de cache)."""
+        if not self.token:
+            return
         new_name = f"Aluno {uuid.uuid4().hex[:6]}"
         payload = {"name": new_name}
         with self.client.put("/api/users/me", json=payload, catch_response=True, name="/api/users/me") as resp:
@@ -207,6 +212,8 @@ class SQLArenaStudent(HttpUser):
         Submete uma resposta SQL respeitando o Rate Limit de 5s sem bloquear o fluxo.
         Se ainda estiver em cooldown de 5s, redireciona o ciclo para consulta do catálogo.
         """
+        if not self.token:
+            return
         now = time.time()
         if now - getattr(self, "last_sub_time", 0) < 5.2:
             self.browse_questions_and_details()
