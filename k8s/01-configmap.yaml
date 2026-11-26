@@ -13,8 +13,10 @@ data:
   ALGORITHM: "HS256"
   ACCESS_TOKEN_EXPIRE_MINUTES: "10080"
 
-  # 1. AWS DynamoDB (Serviço Gerenciado na AWS)
+  # 1. Amazon DynamoDB (AWS Real ou Ministack Local)
   AWS_REGION: "us-east-1"
+  # Deixe "" (vazio) para conectar ao Amazon DynamoDB real na nuvem AWS.
+  # Para execução 100% offline com Ministack local, defina: "http://host.docker.internal:4566"
   DYNAMODB_ENDPOINT_URL: ""
   DYNAMODB_TABLE_NAME: "sqlarena-submissions-log"
   DYNAMODB_CRUD_TABLE_NAME: "sqlarena-crud-actions-log"
