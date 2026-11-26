@@ -1,28 +1,26 @@
 # ⚔️ SQLArena - Plataforma Distribuída de Ensino e Avaliação de SQL
 
-> **Trabalho Prático 2 — Desenvolvimento de Software para Nuvem (UFC)**  
-> **Professores:** Dr. Paulo A. L. Rego e Dr. Fernando Antonio Mota Trinta  
-> **Objetivo:** Implantação da aplicação desenvolvida no Trabalho 1 utilizando **Docker**, **Docker Compose** e **Kubernetes**.
+Plataforma distribuída para aprendizado e avaliação automatizada de consultas SQL, com execução assíncrona orientada a eventos, isolamento em sandbox relacional, cache em memória e persistência distribuída.
 
 ---
 
-## 🏛️ 1. Arquitetura da Aplicação e Substituições de Serviços
+## 🏛️ 1. Arquitetura da Aplicação
 
-Neste Trabalho Prático 2, todos os serviços que antes eram gerenciados pela AWS (RDS, S3, SQS e ElastiCache) foram **migrados para containers gerenciados localmente**, mantendo apenas o **Amazon DynamoDB** como banco NoSQL na nuvem (conforme a especificação do trabalho):
+A arquitetura do SQLArena é composta por microsserviços e serviços de dados conteinerizados:
 
-| Serviço / Camada | Tecnologia Atual | O que substitui | Função na Aplicação |
-| :--- | :--- | :--- | :--- |
-| **Banco NoSQL (AWS)** | **Amazon DynamoDB** | *Mantido na AWS* | Persiste de forma imutável o histórico de submissões (`sqlarena-submissions-log`) e a auditoria de ações de CRUD (`sqlarena-crud-actions-log`). |
-| **Banco Relacional Principal** | **PostgreSQL 16** (`postgres:16-alpine`) | Amazon RDS | Container gerenciado pela equipe com volume persistente. Armazena usuários, categorias N:N, questões e pontuação (+10 XP). |
-| **Armazenamento de Arquivos** | **MinIO** (`elestio/minio:latest`) | Amazon S3 | Container compatível com API S3 (`boto3`). Armazena scripts SQL puros de cada questão (`schema.sql`, `data.sql`, `answer.sql`) e avatares. |
-| **Fila de Mensagens Assíncrona**| **Apache Kafka** (`apache/kafka:3.8.0`) | Amazon SQS | Broker em modo **KRaft** (sem Zookeeper). Tópico particionado (`sqlarena-submissions-queue`) com Consumer Group e Dead Letter Queue (DLQ). |
-| **Cache & Rate Limit** | **Redis 7** (`redis:7-alpine`) | Amazon ElastiCache | Rate Limit de 5 segundos por aluno, cache de ranking e status em tempo real. |
-| **Backend & Worker** | **`app/Dockerfile`** | Golden AMIs | Imagem Python 3.11 com FastAPI (API REST + seed automático `--if-empty`) e o Worker de avaliação. |
-| **Frontend** | **`frontend/Dockerfile`** | Golden AMIs | Build Multi-Stage (Node 20 -> Nginx 1.27 Alpine) servindo React 19 SPA com Reverse Proxy para `/api`. |
+| Componente / Camada | Tecnologia | Função na Aplicação |
+| :--- | :--- | :--- |
+| **Banco NoSQL** | **Amazon DynamoDB** (AWS ou Ministack) | Persistência imutável do histórico de submissões (`sqlarena-submissions-log`) e auditoria de ações administrativas (`sqlarena-crud-actions-log`). |
+| **Banco Relacional Principal** | **PostgreSQL 16** (`postgres:16-alpine`) | Persistência relacional de usuários, catálogo de categorias N:N, questões e pontuações consolidadas. |
+| **Armazenamento de Objetos** | **MinIO** (`elestio/minio:latest`) | Armazenamento S3-compatible de scripts SQL de cada exercício (`schema.sql`, `data.sql`, `answer.sql`) e avatares de usuários. |
+| **Mensageria Assíncrona** | **Apache Kafka** (`apache/kafka:3.8.0`) | Broker em modo KRaft com tópicos particionados (`sqlarena-submissions-queue`), Consumer Groups e Dead Letter Queue (DLQ). |
+| **Cache & Rate Limit** | **Redis 7** (`redis:7-alpine`) | Controle de taxa de submissão (5s por usuário), cache de ranking global e estado de processamento em tempo real. |
+| **Backend API & Worker** | **`app/Dockerfile`** (Python 3.11 / FastAPI) | API RESTful com autenticação JWT, validação de regras de negócio, health check real e motor worker de avaliação de queries. |
+| **Frontend Web** | **`frontend/Dockerfile`** (React 19 / Nginx) | SPA em React 19 com Monaco Editor, Tailwind CSS e Nginx atuando como reverse proxy para a API. |
 
 ---
 
-## 📂 2. Estrutura de Arquivos do Projeto
+## 📂 2. Estrutura de Diretórios do Projeto
 
 ```text
 SQLArena/
@@ -32,9 +30,9 @@ SQLArena/
 │   ├── api/                    # Endpoints REST (auth, questions, submissions, audit, users, ranking)
 │   ├── cache/                  # Cliente Redis (Rate Limit de 5s e cache de ranking)
 │   ├── database/               # PostgreSQL Principal (models SQLAlchemy, seed.py idempotente)
-│   ├── dynamodb/               # Cliente oficial do Amazon DynamoDB (AWS)
+│   ├── dynamodb/               # Cliente oficial do Amazon DynamoDB (AWS Boto3)
 │   ├── kafka/                  # Gerenciador do Apache Kafka (com commits e retries resilientes)
-│   ├── minio/                  # Gerenciador do MinIO S3-Compatible (substituindo S3)
+│   ├── minio/                  # Gerenciador do MinIO S3-Compatible
 │   ├── worker/                 # Motor de avaliação em Sandbox PostgreSQL
 │   ├── config.py               # Variáveis e configurações Pydantic
 │   └── main.py                 # Ponto de entrada FastAPI com health check real
@@ -42,7 +40,7 @@ SQLArena/
 │   ├── Dockerfile              # Imagem Multi-Stage (Node 20 Build -> Nginx 1.27 Alpine)
 │   ├── nginx.conf.template     # Template Nginx com proxy dinâmico para /api
 │   └── src/                    # SPA React 19, Tailwind CSS v4 e Monaco Editor
-├── k8s/                        # Manifestos Kubernetes Locais (Bônus de 1 ponto)
+├── k8s/                        # Manifestos Kubernetes Locais
 │   ├── 01-configmap.yaml       # Variáveis de ambiente não-sensíveis (com suporte a AWS ou Ministack)
 │   ├── 02-secrets.yaml         # Secrets (senhas Postgres, MinIO e chaves AWS DynamoDB)
 │   ├── 03-postgres-main.yaml   # Deployment + PVC + Service ClusterIP do Postgres Principal
@@ -52,33 +50,33 @@ SQLArena/
 │   ├── 07-web-pod.yaml         # POD 1 (Frontend + Backend) + Services NodePort (30080) e ClusterIP
 │   ├── 08-worker-pod.yaml      # POD 2 (Worker + Postgres Sandbox Sidecar) + Service ClusterIP
 │   └── 09-hpa.yaml             # HorizontalPodAutoscaler (HPA) para escalabilidade dos Pods
-├── terraform/                  # Infraestrutura como Código exclusiva para o DynamoDB
+├── terraform/                  # Infraestrutura como Código para o DynamoDB
 │   ├── modules/dynamodb/       # Módulo com as tabelas de submissões e auditoria CRUD
-│   ├── envs/credentials.tfvars.example # Modelo para AWS Academy
+│   ├── envs/credentials.tfvars.example # Modelo para credenciais da AWS
 │   ├── envs/local.tfvars       # Variáveis para Ministack local (porta 4566)
-│   ├── main.tf                 # Criação das tabelas DynamoDB
+│   ├── main.tf                 # Definição dos recursos DynamoDB
 │   ├── variables.tf            # Declaração de variáveis
 │   ├── outputs.tf              # Nomes e ARNs das tabelas
 │   └── providers.tf            # Provedor AWS
-├── ministack/                  # Emulador local de serviços AWS (para teste offline do DynamoDB)
+├── ministack/                  # Emulador local de serviços AWS (para execução offline do DynamoDB)
 │   └── docker-compose.yml      # Ministack na porta 4566
-├── docker-compose.yml          # Orquestração principal de TODOS os 8 containers da aplicação
+├── docker-compose.yml          # Orquestração principal de TODOS os containers da aplicação
 └── .env.example                # Modelo de variáveis de ambiente
 ```
 
 ---
 
-## 📋 GUIA DE EXECUÇÃO SEQUENCIAL PASSO A PASSO
+## 📋 GUIA DE EXECUÇÃO SEQUENCIAL
 
-Siga rigorosamente a ordem abaixo para subir a aplicação do zero.
+Siga rigorosamente os passos abaixo para configurar e executar o projeto.
 
 ---
 
 ### PASSO 1: Configurar a Camada NoSQL (Amazon DynamoDB)
 
-Como o **DynamoDB** é o único serviço externo mantido, a primeira decisão é definir se você irá se conectar ao DynamoDB oficial na **nuvem da AWS** ou emulá-lo **localmente de forma 100% offline** via Ministack.
+A primeira etapa consiste em definir se a aplicação utilizará o **Amazon DynamoDB na nuvem da AWS** ou o **emulador local offline (Ministack)**.
 
-Primeiro, gere o arquivo de configuração `.env` na raiz do projeto:
+Primeiro, crie o arquivo `.env` na raiz do projeto copiando o modelo de exemplo:
 
 ```powershell
 # Windows (PowerShell):
@@ -88,29 +86,27 @@ Copy-Item .env.example .env
 cp .env.example .env
 ```
 
-Agora, escolha **uma** das duas opções a seguir:
+Agora, escolha **uma** das duas opções a seguir para o DynamoDB:
 
 ---
 
-#### 🟢 OPÇÃO 1.A: Usar Amazon DynamoDB Real na AWS (Recomendado)
+#### 🟢 OPÇÃO 1.A: Utilizar o Amazon DynamoDB Oficial na AWS
 
-Se você tem acesso à AWS (ex: conta do AWS Academy Learner Lab):
-
-1. **Criar as tabelas no DynamoDB via Terraform:**
-   * Vá até a pasta `terraform/envs/`:
+1. **Provisionar as tabelas no DynamoDB via Terraform:**
+   * Acesse o diretório de variáveis do Terraform e copie o modelo:
      ```powershell
      cd terraform/envs
      Copy-Item credentials.tfvars.example credentials.tfvars
      ```
-   * Abra `credentials.tfvars` e cole suas credenciais ativas do AWS Academy (`aws_access_key`, `aws_secret_key` e `aws_session_token`).
-   * Volte para a pasta `terraform` e aplique o Terraform:
+   * Abra o arquivo `credentials.tfvars` e insira suas credenciais ativas da AWS (`aws_access_key`, `aws_secret_key` e `aws_session_token`).
+   * Retorne à pasta `terraform` e aplique o plano:
      ```powershell
      cd ..
      terraform init
      terraform apply -var-file="envs/credentials.tfvars" -auto-approve
      cd ..
      ```
-     *(Isso criará automaticamente as tabelas `sqlarena-submissions-log` e `sqlarena-crud-actions-log` na sua conta AWS).*
+     *(As tabelas `sqlarena-submissions-log` e `sqlarena-crud-actions-log` serão criadas na AWS).*
 
 2. **Preencher o arquivo `.env` na raiz do projeto:**
    Abra o `.env` e configure suas credenciais da AWS:
@@ -121,16 +117,14 @@ Se você tem acesso à AWS (ex: conta do AWS Academy Learner Lab):
    AWS_SESSION_TOKEN=IQoJb3JpZ2luX2VjE...
    DYNAMODB_ENDPOINT_URL=
    ```
-   *(Deixe `DYNAMODB_ENDPOINT_URL=` vazio para que a aplicação se conecte aos endpoints oficiais da AWS).*
+   *(Mantenha `DYNAMODB_ENDPOINT_URL=` vazio para conectar diretamente aos servidores da AWS).*
 
 ---
 
-#### 🟡 OPÇÃO 1.B: Modo 100% Offline (Sem AWS, via Ministack)
+#### 🟡 OPÇÃO 1.B: Execução 100% Offline (Sem AWS, via Ministack)
 
-Se você não tiver conta da AWS ou quiser testar tudo localmente sem custos:
-
-1. **Configurar o arquivo `.env` primeiro:**
-   Abra o arquivo `.env` na raiz do projeto e ajuste as variáveis para o emulador local:
+1. **Configurar o arquivo `.env` na raiz primeiro:**
+   Abra o arquivo `.env` e ajuste as variáveis para apontar para o container do Ministack local:
    ```env
    AWS_REGION=us-east-1
    AWS_ACCESS_KEY_ID=test
@@ -139,28 +133,28 @@ Se você não tiver conta da AWS ou quiser testar tudo localmente sem custos:
    DYNAMODB_ENDPOINT_URL=http://host.docker.internal:4566
    ```
 
-2. **Agora sim, iniciar o container do Ministack:**
-   Execute no terminal para subir o emulador local na porta `4566`:
+2. **Iniciar o container do Ministack:**
+   Execute no terminal para inicializar o emulador local na porta `4566`:
    ```powershell
    docker compose -f ministack/docker-compose.yml up -d
    ```
 
-*(Opcional: Se desejar criar as tabelas no Ministack via Terraform, basta rodar `cd terraform; terraform apply -var-file="envs/local.tfvars" -auto-approve; cd ..`. Caso contrário, a própria aplicação cria as tabelas automaticamente no primeiro boot).*
+*(Nota: O backend da aplicação detecta o Ministack e inicializa as tabelas automaticamente no primeiro boot).*
 
 ---
 
-### PASSO 2: Escolha Como Executar a Aplicação
+### PASSO 2: Escolha a Plataforma de Execução
 
-Com o DynamoDB configurado no **Passo 1**, escolha agora **como** deseja subir os serviços da aplicação:
+Com o DynamoDB configurado no **Passo 1**, escolha o método de execução da aplicação:
 
-* **[Caminho A: Docker Compose](#-caminho-a-executar-via-docker-compose-pontuação-principal--90-pontos)** (Mais simples, 1 único comando — Pontuação Principal de 9,0 Pontos)
-* **[Caminho B: Kubernetes Local](#-caminho-b-executar-via-kubernetes-local-bônus--10-ponto)** (Pods Multi-Container, Services NodePort/ClusterIP e HPA — Bônus de 1,0 Ponto)
+* **[Caminho A: Docker Compose](#-caminho-a-executar-via-docker-compose)** (Execução unificada de todos os containers)
+* **[Caminho B: Kubernetes Local](#-caminho-b-executar-via-kubernetes-local)** (Orquestração via Pods Multi-Container, Services e HPA)
 
 ---
 
-### 🐳 CAMINHO A: Executar via Docker Compose (Pontuação Principal — 9,0 Pontos)
+### 🐳 CAMINHO A: Executar via Docker Compose
 
-O arquivo [`docker-compose.yml`](docker-compose.yml) orquestra de forma integrada todos os 8 containers da aplicação:
+O arquivo [`docker-compose.yml`](docker-compose.yml) orquestra de forma integrada todos os 8 containers:
 - `sqlarena-postgres`: PostgreSQL 16 Principal (porta `15432`)
 - `sqlarena-postgres-sandbox`: PostgreSQL 16 Sandbox isolado para queries de alunos (porta `15433`)
 - `sqlarena-redis`: Redis 7 (porta `16379`)
@@ -176,13 +170,13 @@ Na raiz do projeto (`SQLArena/`), execute:
 docker compose up -d --build
 ```
 
-O comando irá baixar as imagens base, compilar o backend e o frontend, aguardar os health checks das dependências e iniciar a API e o Worker.
+O comando irá construir as imagens locais, aguardar os health checks das dependências e iniciar a API, o Worker e o Frontend.
 
 #### 2. Verificar o status dos containers:
 ```powershell
 docker compose ps
 ```
-Todos os 8 containers devem figurar como **`Up (healthy)`** ou **`Up`**.
+Todos os containers devem exibir o status **`Up (healthy)`** ou **`Up`**.
 
 #### 3. Para pausar ou resetar a aplicação:
 * **Pausar mantendo os dados salvos:**
@@ -196,9 +190,9 @@ Todos os 8 containers devem figurar como **`Up (healthy)`** ou **`Up`**.
 
 ---
 
-### ☸️ CAMINHO B: Executar via Kubernetes Local (Bônus — 1,0 Ponto)
+### ☸️ CAMINHO B: Executar via Kubernetes Local
 
-Se você optar por rodar no Kubernetes (seja via **Docker Desktop com Kubernetes ativado** ou via **Minikube**), a aplicação utiliza uma arquitetura de Pods Multi-Container:
+A aplicação disponibiliza manifestos para execução em clusters locais (**Docker Desktop com Kubernetes ativado** ou **Minikube**) utilizando topologia de Pods Multi-Container:
 
 ```mermaid
 flowchart TB
@@ -243,7 +237,7 @@ flowchart TB
     BE <-->|"boto3 (AWS Secrets)"| Dynamo
 ```
 
-* **POD 1 — `sqlarena-web` (`k8s/07-web-pod.yaml`):** Co-localiza o **Frontend** e o **Backend** no mesmo Pod. O Nginx atende na porta `80` e repassa chamadas `/api` via loopback interno (`http://127.0.0.1:8000`). Exposto externamente via Service **NodePort** (`30080`) e internamente via Service **ClusterIP**.
+* **POD 1 — `sqlarena-web` (`k8s/07-web-pod.yaml`):** Co-localiza o **Frontend** e o **Backend** no mesmo Pod. O Nginx atende na porta `80` e repassa requisições `/api` via loopback interno (`http://127.0.0.1:8000`). Exposto externamente via Service **NodePort** (`30080`) e internamente via Service **ClusterIP**.
 * **POD 2 — `sqlarena-worker` (`k8s/08-worker-pod.yaml`):** Padrão **Sidecar** co-localizando o **Worker Python** e o **PostgreSQL Sandbox** isolado (`127.0.0.1:5432`). Ao escalar via HPA, cada réplica ganha seu próprio sandbox independente.
 
 #### 1. Iniciar o cluster local:
@@ -254,17 +248,17 @@ flowchart TB
   ```
 
 #### 2. Configurar o Kubernetes conforme o modo de DynamoDB escolhido no Passo 1:
-O Kubernetes funciona tanto com a AWS real quanto com o Ministack offline:
-* **Se você escolheu a AWS Real (Opção 1.A):**
-  Abra o arquivo [`k8s/02-secrets.yaml`](k8s/02-secrets.yaml) e preencha suas credenciais do AWS Academy:
+O cluster opera de forma transparente tanto com a AWS real quanto com o Ministack local:
+* **Se escolheu a AWS Real (Opção 1.A):**
+  Abra [`k8s/02-secrets.yaml`](k8s/02-secrets.yaml) e preencha suas credenciais ativas da AWS:
   ```yaml
   AWS_ACCESS_KEY_ID: "ASIA..."
   AWS_SECRET_ACCESS_KEY: "..."
   AWS_SESSION_TOKEN: "IQoJ..."
   ```
-  *(O arquivo `k8s/01-configmap.yaml` já está configurado com `DYNAMODB_ENDPOINT_URL: ""` por padrão).*
-* **Se você escolheu o Ministack Offline (Opção 1.B):**
-  Em [`k8s/02-secrets.yaml`](k8s/02-secrets.yaml), use:
+  *(O arquivo `k8s/01-configmap.yaml` já possui `DYNAMODB_ENDPOINT_URL: ""` por padrão).*
+* **Se escolheu o Ministack Offline (Opção 1.B):**
+  Em [`k8s/02-secrets.yaml`](k8s/02-secrets.yaml), defina:
   ```yaml
   AWS_ACCESS_KEY_ID: "test"
   AWS_SECRET_ACCESS_KEY: "test"
@@ -276,20 +270,20 @@ O Kubernetes funciona tanto com a AWS real quanto com o Ministack offline:
   ```
 
 #### 3. Aplicar os manifestos no Kubernetes:
-Execute na raiz do projeto:
+Na raiz do projeto, execute:
 ```powershell
 kubectl apply -f k8s/
 ```
 
 #### 4. Verificar Pods e Services:
 ```powershell
-# Verifique se todos os Pods estão 'Running' (observe READY 2/2 nos Pods Web e Worker!):
+# Verifique se todos os Pods estão 'Running' (observe READY 2/2 nos Pods Web e Worker):
 kubectl get pods
 
-# Verifique os Services com NodePort e ClusterIP:
+# Listar os Services (NodePort e ClusterIP):
 kubectl get services
 
-# Inspecione o auto-scaling dos Pods (HPA):
+# Inspecionar o auto-scaling dos Pods (HPA):
 kubectl get hpa
 ```
 
@@ -302,43 +296,43 @@ kubectl delete -f k8s/
 
 ### PASSO 3: Acessar a Aplicação no Navegador
 
-Após subir via **Docker Compose** ou **Kubernetes**, acesse os seguintes endereços no navegador:
+Após a inicialização (seja por **Docker Compose** ou **Kubernetes**), acesse os serviços:
 
-| Serviço | URL no Docker Compose | URL no Kubernetes (NodePort) | Credenciais de Acesso |
+| Serviço | URL via Docker Compose | URL via Kubernetes (NodePort) | Credenciais de Acesso |
 | :--- | :--- | :--- | :--- |
 | **Plataforma Web (Frontend)** | [http://localhost](http://localhost) (ou `:5173`) | [http://localhost:30080](http://localhost:30080) | *(Ver Passo 4)* |
-| **Documentação da API (Swagger)** | [http://localhost:8000/docs](http://localhost:8000/docs) | [http://localhost:30800/docs](http://localhost:30800/docs) | Aberto |
+| **Documentação da API (Swagger)** | [http://localhost:8000/docs](http://localhost:8000/docs) | [http://localhost:30800/docs](http://localhost:30800/docs) | Acesso livre |
 | **Console Web do MinIO Storage** | [http://localhost:9001](http://localhost:9001) | [http://localhost:30901](http://localhost:30901) | **Usuário:** `minioadmin`<br>**Senha:** `minioadmin123` |
 
-*(Nota no Minikube: caso as portas NodePort não abram diretamente pelo localhost, execute `minikube service sqlarena-web-nodeport` para abrir o túnel automaticamente).*
+*(Nota para usuários de Minikube: caso as portas NodePort não abram diretamente pelo localhost, execute `minikube service sqlarena-web-nodeport` para abrir o túnel).*
 
 ---
 
-### PASSO 4: Credenciais Prontas para Teste
+### PASSO 4: Credenciais Pré-configuradas para Teste
 
-A aplicação já vem com contas pré-configuradas no seed inicial para você testar imediatamente:
+O seed da aplicação cadastra automaticamente dois perfis para validação do sistema:
 
-| Papel | Email | Senha | O que você pode testar |
+| Papel | Email | Senha | Operações Disponíveis |
 | :--- | :--- | :--- | :--- |
-| **Aluno** | `gustavo@sqlarena.com` | `123456` | Explorar o catálogo de 21 questões de SQL, escrever consultas no editor interativo Monaco, submeter queries para avaliação assíncrona com feedback em tempo real e ver o ranking geral. |
-| **Instrutor** | `admin@sqlarena.com` | `123456` | Criar novas questões com validação automática de SQL (DDL, DML e gabarito), publicar/despublicar/deletar exercícios e inspecionar logs de auditoria no DynamoDB. |
+| **Aluno** | `gustavo@sqlarena.com` | `123456` | Acessar catálogo com 21 exercícios de SQL, redigir consultas no editor interativo Monaco, submeter queries para avaliação assíncrona, receber diagnóstico em tempo real e visualizar ranking geral. |
+| **Instrutor** | `admin@sqlarena.com` | `123456` | Criar novas questões com validação automática de scripts SQL (DDL, DML e gabarito), gerenciar status de publicação/exclusão e consultar logs de auditoria no DynamoDB. |
 
 ---
 
-### PASSO 5: Executar os Testes Automatizados
+### PASSO 5: Executar a Suíte de Testes Automatizados
 
-Para validar o funcionamento da aplicação e de todos os componentes de segurança e resiliência:
+Para validar o funcionamento dos serviços, segurança de callback, health check e Kafka:
 
-* **Se estiver rodando com Docker Compose:**
+* **Se estiver executando com Docker Compose:**
   ```powershell
   # Testes de segurança, autenticação de callback, resiliência do Kafka e healthcheck real:
   docker exec sqlarena-backend pytest app/testes/test_security_and_reliability.py -v
 
-  # Todos os testes unitários e de integração:
+  # Execução de todos os testes unitários e de integração:
   docker exec sqlarena-backend pytest app/testes/ -v
   ```
 
-* **Se estiver rodando no Kubernetes:**
+* **Se estiver executando no Kubernetes:**
   ```powershell
   kubectl exec -it deployment/sqlarena-web -c backend -- pytest app/testes/test_security_and_reliability.py -v
   ```
@@ -347,7 +341,7 @@ Para validar o funcionamento da aplicação e de todos os componentes de seguran
 
 ### PASSO 6: Limpeza e Finalização (Tear Down)
 
-Ao terminar os testes ou a apresentação do trabalho:
+Ao encerrar os testes:
 
 1. **Se utilizou a AWS Real (Terraform):**
    Para evitar custos na sua conta AWS, destrua as tabelas do DynamoDB:

@@ -1,14 +1,10 @@
-# 🏗️ Terraform - Amazon DynamoDB (Trabalho 2)
+# 🏗️ Terraform - Módulo Amazon DynamoDB
 
-Conforme a **Especificação do Trabalho Prático 2**, o **Amazon DynamoDB** é o **único serviço da AWS mantido** no projeto (para persistir o histórico imutável de submissões e auditoria de ações administrativas de CRUD).
+Módulo de Infraestrutura como Código (IaC) para provisionamento automatizado das tabelas NoSQL do **Amazon DynamoDB** utilizadas pela aplicação SQLArena:
+- `sqlarena-submissions-log`: registro imutável do histórico de submissões de consultas SQL;
+- `sqlarena-crud-actions-log`: auditoria de ações administrativas (criação, edição e exclusão de questões).
 
-Todos os demais componentes do Trabalho 1 que antes rodavam na AWS (RDS, S3, SQS, ElastiCache e instâncias EC2) foram **migrados para containers locais** gerenciados via **Docker Compose** e **Kubernetes local**:
-- PostgreSQL (`postgres:16-alpine`) substitui o Amazon RDS;
-- MinIO (`elestio/minio:latest`) substitui o Amazon S3;
-- Apache Kafka (`apache/kafka:3.8.0`) substitui o Amazon SQS;
-- Redis (`redis:7-alpine`) substitui o Amazon ElastiCache.
-
-Por essa razão, este Terraform gerencia exclusivamente as **tabelas do Amazon DynamoDB**.
+O módulo suporta execução tanto na **nuvem da AWS** quanto em **ambiente local** via Ministack.
 
 ---
 
