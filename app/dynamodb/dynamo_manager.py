@@ -68,12 +68,13 @@ class DynamoDBManager:
         )
         self.region_name = region_name or os.getenv("AWS_REGION", "us-east-1")
 
-        # Prioriza DYNAMODB_ENDPOINT_URL; se vazio na AWS, usa o serviço oficial AWS DynamoDB na nuvem
-        raw_endpoint = (
-            endpoint_url
-            if endpoint_url is not None
-            else (os.getenv("DYNAMODB_ENDPOINT_URL") or os.getenv("AWS_ENDPOINT_URL"))
-        )
+        # Prioriza DYNAMODB_ENDPOINT_URL; se estiver explicitamente vazio (""), usa o serviço oficial AWS DynamoDB na nuvem
+        if endpoint_url is not None:
+            raw_endpoint = endpoint_url
+        elif "DYNAMODB_ENDPOINT_URL" in os.environ:
+            raw_endpoint = os.getenv("DYNAMODB_ENDPOINT_URL")
+        else:
+            raw_endpoint = os.getenv("AWS_ENDPOINT_URL")
         self.endpoint_url = raw_endpoint.strip() if raw_endpoint and raw_endpoint.strip() else None
 
         aws_access_key = os.getenv("AWS_ACCESS_KEY_ID")

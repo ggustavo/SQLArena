@@ -1,6 +1,9 @@
-# Git
+# Git e arquivos de ambiente locais
 .git
 .gitignore
+.env
+**/.env
+!.env.example
 
 # Ambientes virtuais e caches Python
 **/__pycache__/
