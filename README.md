@@ -247,56 +247,7 @@ Todos os containers devem exibir o status **`Up (healthy)`** ou **`Up`**.
 
 A aplicação disponibiliza manifestos 100% compatíveis com qualquer cluster Kubernetes local (**OrbStack**, **Docker Desktop**, **K3s**, etc.) utilizando topologia de Pods Multi-Container:
 
-```mermaid
-flowchart TB
-    subgraph NuvemAWS["☁️ Nuvem AWS (ou Ministack Local)"]
-        Dynamo[("📄 Amazon DynamoDB\n(Submissões & Auditoria CRUD)")]
-    end
-
-    subgraph ClusterK8s["☸️ Cluster Kubernetes"]
-        NP["🌐 Service NodePort (30080)\nAcesso Externo"]
-        CIP["🔗 Service ClusterIP (sqlarena-web-clusterip:8000)\nComunicação Interna"]
-
-        subgraph PodWeb["📦 POD 1: Deployment 'sqlarena-web'"]
-            FE["🖥️ Container Frontend\n(React SPA + Nginx :80)"]
-            BE["⚙️ Container Backend\n(FastAPI :8000)"]
-            FE -- "Reverse Proxy via localhost\nhttp://127.0.0.1:8000/api" --> BE
-        end
-
-        subgraph PodWorker["📦 POD 2: Deployment 'sqlarena-worker' (Sidecar)"]
-            WK["⚡ Container Worker\n(Python Consumer)"]
-            PGSB[("🐘 Container Postgres Sandbox\n(Sidecar Local 127.0.0.1:5432)")]
-            VolWorker[("⏱️ Volume Efêmero\nemptyDir: {}")]
-            WK -- "Executa SQL do Aluno em\n127.0.0.1:5432 (Isolado)" --> PGSB
-            PGSB -.->|"Monta (/data)"| VolWorker
-        end
-
-        subgraph ServicosDados["🗄️ Serviços de Infraestrutura no Cluster (ClusterIP)"]
-            PGMain[("🐘 Postgres Principal\n(postgres-service:5432)")]
-            PVC_PG[("💾 PersistentVolumeClaim\npostgres-pvc (5Gi)")]
-            PGMain -.->|"Persiste dados em"| PVC_PG
-
-            MinIO[("🪣 MinIO Storage\n(minio-service:9000)")]
-            PVC_MinIO[("💾 PersistentVolumeClaim\nminio-pvc (5Gi)")]
-            MinIO -.->|"Persiste arquivos em"| PVC_MinIO
-
-            Kafka[["📬 Apache Kafka\n(kafka-service:9092)"]]
-            Redis[("🏎️ Redis Cache\n(redis-service:6379)")]
-        end
-
-        NP --> FE
-        BE --> PGMain
-        BE --> Redis
-        BE --> MinIO
-        BE -- "Envia Submissão" --> Kafka
-        Kafka -- "Consome (Consumer Group)" --> WK
-        WK -- "Baixa Scripts SQL" --> MinIO
-        WK -- "Callback HTTP Resultado" --> CIP
-        CIP --> BE
-    end
-
-    BE <-->|"boto3 (AWS Secrets)"| Dynamo
-```
+![Arquitetura da Aplicação](arc.png)
 
 * **POD 1 — `sqlarena-web` (`k8s/07-web.yaml`):** Co-localiza o **Frontend** e o **Backend** no mesmo Pod. O Nginx atende na porta `80` e repassa requisições `/api` via loopback interno (`http://127.0.0.1:8000`). Exposto externamente via Service **NodePort** (`30080`) e internamente via Service **ClusterIP**.
 * **POD 2 — `sqlarena-worker` (`k8s/08-worker.yaml`):** Padrão **Sidecar** co-localizando o **Worker Python** e o **PostgreSQL Sandbox** isolado (`127.0.0.1:5432`). Ao escalar via HPA, cada réplica ganha seu próprio sandbox independente.
