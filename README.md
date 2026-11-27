@@ -78,7 +78,7 @@ SQLArena/
 
 ## 📋 GUIA DE EXECUÇÃO SEQUENCIAL
 
-Siga rigorosamente os passos abaixo para configurar e executar o projeto.
+Siga  os passos abaixo para configurar e executar o projeto.
 
 ---
 
@@ -252,7 +252,6 @@ A aplicação disponibiliza manifestos 100% compatíveis com qualquer cluster Ku
 * **POD 1 — `sqlarena-web` (`k8s/07-web.yaml`):** Co-localiza o **Frontend** e o **Backend** no mesmo Pod. O Nginx atende na porta `80` e repassa requisições `/api` via loopback interno (`http://127.0.0.1:8000`). Exposto externamente via Service **NodePort** (`30080`) e internamente via Service **ClusterIP**.
 * **POD 2 — `sqlarena-worker` (`k8s/08-worker.yaml`):** Padrão **Sidecar** co-localizando o **Worker Python** e o **PostgreSQL Sandbox** isolado (`127.0.0.1:5432`). Ao escalar via HPA, cada réplica ganha seu próprio sandbox independente.
 
-> 📖 **Quer entender a fundo como funciona Pods, Deployments e Services (ClusterIP vs NodePort)?** Consulte nosso guia didático em [k8s/README.md](k8s/README.md).
 
 #### 1. Construir as imagens locais e aplicar a aplicação com `kubectl`:
 
